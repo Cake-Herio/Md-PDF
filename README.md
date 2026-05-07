@@ -1,6 +1,8 @@
-# Local Markdown Reader
+# Md-PDF
 
-本地试验版 Markdown 阅读程序：
+多系统之间同步 MD/PDF 文件，可手机端在线阅览。
+
+当前版本是本地试验版 Markdown 阅读程序：
 
 - 启动时输入 Markdown 文件夹路径
 - 自动扫描并监听 `.md` 文件变化
