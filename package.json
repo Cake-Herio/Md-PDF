@@ -4,11 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/agent/index.ts",
+    "dev:agent": "tsx src/agent/index.ts",
+    "dev:server": "tsx src/server/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=build/index.cjs",
-    "package:win": "npm run bundle && pkg build/index.cjs --targets node20-win-x64 --output release/local-md-reader.exe"
+    "start": "node dist/agent/index.js",
+    "start:agent": "node dist/agent/index.js",
+    "start:server": "node dist/server/index.js",
+    "bundle": "npm run bundle:agent",
+    "bundle:agent": "esbuild src/agent/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=build/agent.cjs",
+    "bundle:server": "esbuild src/server/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=build/server.cjs",
+    "package:win": "npm run package:agent",
+    "package:agent": "npm run bundle:agent && pkg build/agent.cjs --targets node20-win-x64 --output release/md-pdf-agent.exe",
+    "package:server": "npm run bundle:server && pkg build/server.cjs --targets node20-win-x64 --output release/md-pdf-server.exe"
   },
   "dependencies": {
     "chokidar": "^4.0.3",

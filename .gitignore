@@ -2,5 +2,6 @@ node_modules/
 dist/
 build/
 .md-local-reader/
+.md-pdf-server/
 release/*.exe
 *.log
