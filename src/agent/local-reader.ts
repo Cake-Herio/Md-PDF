@@ -1,13 +1,15 @@
 import { createServer } from "node:http";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { promises as fs } from "node:fs";
 import { createApp } from "../server/app.js";
 import {
+  createAssetStore,
   createDocStore,
   scanAll,
+  scanAllAssets,
 } from "../shared/doc-store.js";
 import {
   watchMarkdownDir,
@@ -36,6 +38,7 @@ export async function startLocalReader() {
   const themeCssPath = await resolveOptionalFile(args.themeCss ?? process.env.TYPORA_THEME_CSS);
   const state = await loadReaderState(statePath);
   const docs = createDocStore();
+  const assets = createAssetStore();
 
   await fs.mkdir(cacheDir, { recursive: true });
   if (await processPendingDeletions(markdownDir, trashDir, state)) {
@@ -51,11 +54,13 @@ export async function startLocalReader() {
   };
 
   await scanAll(markdownDir, docs, scannerOptions);
+  await scanAllAssets(markdownDir, assets);
 
   const app = createApp({
     markdownDir,
     cacheDir,
     docs,
+    assets,
     themeCssPath,
     state,
     saveState: () => saveReaderState(statePath, state),
@@ -77,22 +82,21 @@ export async function startLocalReader() {
 
   watchMarkdownDir(markdownDir, docs, {
     ...scannerOptions,
+    assets,
     onDelete: async (relativePath) => {
       const deletion = createDeletionRecord(relativePath, "local", state.deviceId);
       addDeletionRecord(state, deletion);
       await saveReaderState(statePath, state);
       console.log(`Synced local delete tombstone: ${relativePath}`);
     },
+    onAssetDelete: async (relativePath) => {
+      console.log(`Detected local asset delete: ${relativePath}`);
+    },
   });
 }
 
 async function resolveMarkdownDir(inputDir?: string) {
-  let dir = inputDir?.trim();
-  if (!dir) {
-    const rl = createInterface({ input, output });
-    dir = await rl.question("请输入 Markdown 文件夹路径: ");
-    rl.close();
-  }
+  const dir = inputDir?.trim() || await resolveDesktopDir();
 
   const resolved = path.resolve(dir.replace(/^"|"$/g, ""));
   const stat = await fs.stat(resolved).catch(() => null);
@@ -100,6 +104,20 @@ async function resolveMarkdownDir(inputDir?: string) {
     throw new Error(`Not a directory: ${resolved}`);
   }
   return resolved;
+}
+
+async function resolveDesktopDir() {
+  const candidates = [
+    path.join(homedir(), "Desktop"),
+    path.join(homedir(), "桌面"),
+  ];
+
+  for (const candidate of candidates) {
+    const stat = await fs.stat(candidate).catch(() => null);
+    if (stat?.isDirectory()) return candidate;
+  }
+
+  return candidates[0];
 }
 
 async function resolveOptionalFile(inputPath?: string) {

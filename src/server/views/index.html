@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Markdown PDF Reader</title>
+  {{STYLE_TAG}}
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <h1>Markdown PDF Reader</h1>
+      <p>当前位于 {{CURRENT_LABEL}}，共 {{FOLDER_COUNT}} 个文件夹、{{FILE_COUNT}} 个 Markdown 文件。</p>
+      <div class="breadcrumbs">
+        {{PARENT_LINK}}
+        <span class="current-dir">{{CURRENT_LABEL}}</span>
+      </div>
+      <div class="bulk-actions">
+        <button id="select-mode-button" type="button">选择文件</button>
+        <button id="delete-selected-button" type="button" hidden>删除选中</button>
+        <button id="cancel-select-button" type="button" hidden>取消</button>
+      </div>
+      <input id="search" type="search" placeholder="搜索文件名或路径" autocomplete="off" />
+    </header>
+    <ul id="docs" class="doc-list">{{ITEMS}}</ul>
+  </main>
+
+  <div id="pdf-modal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pdf-modal-title">
+      <button id="pdf-modal-close" class="modal-close" type="button" aria-label="关闭">×</button>
+      <div class="progress-ring" aria-hidden="true">
+        <svg viewBox="0 0 128 128">
+          <circle class="progress-ring-bg" cx="64" cy="64" r="54"></circle>
+          <circle id="pdf-progress-circle" class="progress-ring-value" cx="64" cy="64" r="54"></circle>
+        </svg>
+        <div id="pdf-progress-percent" class="progress-percent">0%</div>
+      </div>
+      <h2 id="pdf-modal-title">正在生成 PDF</h2>
+      <p id="pdf-modal-file" class="modal-file"></p>
+      <p id="pdf-modal-status" class="modal-status">正在准备...</p>
+    </section>
+  </div>
+
+  <script>
+{{INDEX_SCRIPT}}
+  </script>
+</body>
+</html>

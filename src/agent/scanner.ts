@@ -1,6 +1,8 @@
 import chokidar from "chokidar";
-import type { DocStore } from "../shared/types.js";
+import type { AssetStore, DocStore } from "../shared/types.js";
 import {
+  isAssetPath,
+  isImageAsset,
   isMarkdown,
   shouldIgnore,
   toRelative,
@@ -8,11 +10,14 @@ import {
 import type { ScannerOptions } from "../shared/doc-store.js";
 import {
   shouldInclude,
+  upsertAsset,
   upsertDoc,
 } from "../shared/doc-store.js";
 
 type WatchOptions = ScannerOptions & {
   onDelete?: (relativePath: string) => void | Promise<void>;
+  assets?: AssetStore;
+  onAssetDelete?: (relativePath: string) => void | Promise<void>;
 };
 
 export function watchMarkdownDir(markdownDir: string, docs: DocStore, options: WatchOptions = {}) {
@@ -41,9 +46,14 @@ function scheduleRefresh(
   pending: Map<string, NodeJS.Timeout>,
   options: WatchOptions,
 ) {
-  if (!isMarkdown(filePath) || shouldIgnore(filePath, markdownDir)) return;
-
   const key = toRelative(markdownDir, filePath);
+  if (shouldIgnore(filePath, markdownDir)) return;
+  if (isAssetPath(key) && isImageAsset(key)) {
+    scheduleAssetRefresh(markdownDir, filePath, key, pending, options);
+    return;
+  }
+
+  if (!isMarkdown(filePath)) return;
   if (!shouldInclude(key, options)) return;
   const oldTimer = pending.get(key);
   if (oldTimer) clearTimeout(oldTimer);
@@ -59,8 +69,38 @@ function scheduleRefresh(
   );
 }
 
+function scheduleAssetRefresh(
+  markdownDir: string,
+  filePath: string,
+  key: string,
+  pending: Map<string, NodeJS.Timeout>,
+  options: WatchOptions,
+) {
+  if (!options.assets) return;
+  const oldTimer = pending.get(key);
+  if (oldTimer) clearTimeout(oldTimer);
+
+  pending.set(
+    key,
+    setTimeout(async () => {
+      pending.delete(key);
+      await upsertAsset(markdownDir, filePath, options.assets!).catch((error) => {
+        console.error(`Failed to refresh asset ${key}:`, error);
+      });
+    }, 700),
+  );
+}
+
 async function removeDoc(markdownDir: string, filePath: string, docs: DocStore, options: WatchOptions) {
   const relativePath = toRelative(markdownDir, filePath);
+  if (isAssetPath(relativePath) && isImageAsset(relativePath)) {
+    options.assets?.delete(relativePath);
+    await options.onAssetDelete?.(relativePath);
+    console.log(`Removed asset: ${relativePath}`);
+    return;
+  }
+
+  if (!isMarkdown(filePath)) return;
   docs.delete(relativePath);
   if (shouldInclude(relativePath, options)) {
     await options.onDelete?.(relativePath);

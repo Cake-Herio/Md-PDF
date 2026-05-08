@@ -6,9 +6,9 @@ import {
   promises as fs,
 } from "node:fs";
 import path from "node:path";
-import type { DocMeta, DocStore, ReaderState } from "../shared/types.js";
+import type { AssetStore, DocMeta, DocStore, ReaderState } from "../shared/types.js";
 import { buildContentDisposition } from "../shared/format.js";
-import { isInside, normalizeRelativePath } from "../shared/path.js";
+import { isAssetPath, isImageAsset, isInside, normalizeRelativePath } from "../shared/path.js";
 import { addDeletionRecord, createDeletionRecord } from "../shared/state.js";
 import {
   ensurePdf,
@@ -24,6 +24,7 @@ type CreateAppOptions = {
   markdownDir: string;
   cacheDir: string;
   docs: DocStore;
+  assets: AssetStore;
   themeCssPath?: string;
   state: ReaderState;
   saveState: () => Promise<void>;
@@ -33,12 +34,13 @@ export function createApp({
   markdownDir,
   cacheDir,
   docs,
+  assets,
   themeCssPath,
   state,
   saveState,
 }: CreateAppOptions) {
   const app = express();
-  const pdfOptions = { themeCssPath };
+  const pdfOptions = { assets, markdownDir, themeCssPath };
   app.use(express.json());
 
   app.get("/", (req, res) => {
@@ -48,6 +50,10 @@ export function createApp({
 
   app.get("/api/files", (_req, res) => {
     res.json([...docs.values()].map(({ absolutePath: _absolutePath, ...doc }) => doc));
+  });
+
+  app.get("/api/assets", (_req, res) => {
+    res.json([...assets.values()].map(({ absolutePath: _absolutePath, ...asset }) => asset));
   });
 
   app.get("/api/deletions", (req, res) => {
@@ -97,7 +103,7 @@ export function createApp({
     }
 
     const markdown = await fs.readFile(doc.absolutePath, "utf8");
-    res.type("html").send(renderMarkdownHtml(doc, markdown, false));
+    res.type("html").send(renderMarkdownHtml(doc, markdown, false, { markdownDir }));
   });
 
   app.get("/pdf", async (req, res) => {
@@ -138,7 +144,11 @@ export function createApp({
   });
 
   app.get("/asset", async (req, res) => {
-    const requested = String(req.query.path ?? "");
+    const requested = normalizeAssetQuery(req.query.path);
+    if (!requested) {
+      res.status(404).send("Asset not found.");
+      return;
+    }
     const absolutePath = path.resolve(markdownDir, requested);
     if (!isInside(markdownDir, absolutePath) || !existsSync(absolutePath)) {
       res.status(404).send("Asset not found.");
@@ -155,7 +165,7 @@ async function sendPdf(
   res: Response,
   docs: DocStore,
   cacheDir: string,
-  pdfOptions: { themeCssPath?: string },
+  pdfOptions: { assets: AssetStore; markdownDir: string; themeCssPath?: string },
   disposition: "inline" | "attachment",
 ) {
   const doc = getDocFromQuery(docs, req.query.path);
@@ -183,7 +193,7 @@ async function sendCachedPdf(
   res: Response,
   docs: DocStore,
   cacheDir: string,
-  pdfOptions: { themeCssPath?: string },
+  pdfOptions: { assets: AssetStore; markdownDir: string; themeCssPath?: string },
   disposition: "inline" | "attachment",
 ) {
   const doc = getDocFromQuery(docs, req.query.path);
@@ -225,6 +235,13 @@ function normalizeDirectoryQuery(value: unknown) {
   const segments = normalized.split("/").filter(Boolean);
   if (segments.some((segment) => segment === "." || segment === "..")) return "";
   return segments.join("/");
+}
+
+function normalizeAssetQuery(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = normalizeFileQuery(value);
+  if (!normalized || !isAssetPath(normalized) || !isImageAsset(normalized)) return null;
+  return normalized;
 }
 
 function buildDirectoryView(docs: DocStore, currentDir: string): DirectoryView {

@@ -1,10 +1,8 @@
 import { createServer } from "node:http";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
 import { promises as fs } from "node:fs";
-import { createDocStore, scanAll } from "../shared/doc-store.js";
+import { createAssetStore, createDocStore, scanAll, scanAllAssets } from "../shared/doc-store.js";
 import { loadReaderState, saveReaderState } from "../shared/state.js";
 import { createApp } from "./app.js";
 
@@ -19,16 +17,19 @@ async function startServer() {
   const markdownDir = await resolveMarkdownDir(args.dir);
   const themeCssPath = await resolveOptionalFile(args.themeCss ?? process.env.TYPORA_THEME_CSS);
   const docs = createDocStore();
+  const assets = createAssetStore();
   const state = await loadReaderState(statePath);
 
   await fs.mkdir(cacheDir, { recursive: true });
   await scanAll(markdownDir, docs);
+  await scanAllAssets(markdownDir, assets);
   await saveReaderState(statePath, state);
 
   const app = createApp({
     markdownDir,
     cacheDir,
     docs,
+    assets,
     themeCssPath,
     state,
     saveState: () => saveReaderState(statePath, state),
@@ -49,12 +50,7 @@ async function startServer() {
 }
 
 async function resolveMarkdownDir(inputDir?: string) {
-  let dir = inputDir?.trim();
-  if (!dir) {
-    const rl = createInterface({ input, output });
-    dir = await rl.question("请输入服务器 Markdown 存储目录: ");
-    rl.close();
-  }
+  const dir = inputDir?.trim() || await resolveDesktopDir();
 
   const resolved = path.resolve(dir.replace(/^"|"$/g, ""));
   const stat = await fs.stat(resolved).catch(() => null);
@@ -62,6 +58,20 @@ async function resolveMarkdownDir(inputDir?: string) {
     throw new Error(`Not a directory: ${resolved}`);
   }
   return resolved;
+}
+
+async function resolveDesktopDir() {
+  const candidates = [
+    path.join(homedir(), "Desktop"),
+    path.join(homedir(), "桌面"),
+  ];
+
+  for (const candidate of candidates) {
+    const stat = await fs.stat(candidate).catch(() => null);
+    if (stat?.isDirectory()) return candidate;
+  }
+
+  return candidates[0];
 }
 
 async function resolveOptionalFile(inputPath?: string) {

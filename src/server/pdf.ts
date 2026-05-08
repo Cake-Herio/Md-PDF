@@ -6,7 +6,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { DocMeta } from "../shared/types.js";
+import type { AssetStore, DocMeta } from "../shared/types.js";
 import { sha256 } from "../shared/hash.js";
 import { renderMarkdownHtml } from "./render.js";
 
@@ -27,6 +27,8 @@ type PdfJob = PdfJobSnapshot & {
 };
 
 export type PdfOptions = {
+  assets?: AssetStore;
+  markdownDir?: string;
   themeCssPath?: string;
 };
 
@@ -35,12 +37,16 @@ type PdfTheme = {
   cacheHash: string;
 };
 
+type PdfCacheIndex = Record<string, string>;
+
 const jobs = new Map<string, PdfJob>();
 const jobIdsByCacheKey = new Map<string, string>();
+const PDF_RENDER_VERSION = "asset-root-v2";
+const PDF_CACHE_INDEX_FILE = "index.json";
 
 export async function getPdfCachePaths(doc: DocMeta, cacheDir: string, options: PdfOptions = {}) {
   const theme = await loadPdfTheme(options);
-  const safeName = getPdfCacheKey(doc, theme);
+  const safeName = getPdfCacheKey(doc, theme, options);
   return {
     htmlPath: path.join(cacheDir, `${safeName}.html`),
     pdfPath: path.join(cacheDir, `${safeName}.pdf`),
@@ -57,7 +63,8 @@ export async function startPdfJob(
   options: PdfOptions = {},
 ): Promise<PdfJobSnapshot> {
   const theme = await loadPdfTheme(options);
-  const cacheKey = getPdfCacheKey(doc, theme);
+  const cacheKey = getPdfCacheKey(doc, theme, options);
+  await preparePdfCacheSlot(doc, cacheDir, cacheKey);
   const existingJobId = jobIdsByCacheKey.get(cacheKey);
   if (existingJobId) {
     const existingJob = jobs.get(existingJobId);
@@ -88,7 +95,7 @@ export async function startPdfJob(
   jobIdsByCacheKey.set(cacheKey, jobId);
 
   if (job.status !== "done") {
-    void runPdfJob(job, doc, cacheDir, theme);
+    void runPdfJob(job, doc, cacheDir, theme, options);
   }
 
   return toSnapshot(job);
@@ -101,17 +108,26 @@ export function getPdfJob(jobId: string): PdfJobSnapshot | null {
 
 export async function ensurePdf(doc: DocMeta, cacheDir: string, options: PdfOptions = {}) {
   const theme = await loadPdfTheme(options);
-  return ensurePdfWithTheme(doc, cacheDir, theme);
+  return ensurePdfWithTheme(doc, cacheDir, theme, options);
 }
 
-async function ensurePdfWithTheme(doc: DocMeta, cacheDir: string, theme: PdfTheme | null) {
-  const cacheKey = getPdfCacheKey(doc, theme);
+async function ensurePdfWithTheme(
+  doc: DocMeta,
+  cacheDir: string,
+  theme: PdfTheme | null,
+  options: PdfOptions,
+) {
+  const cacheKey = getPdfCacheKey(doc, theme, options);
+  await preparePdfCacheSlot(doc, cacheDir, cacheKey);
   const { htmlPath, pdfPath } = getPdfCachePathsByKey(cacheDir, cacheKey);
 
   if (existsSync(pdfPath)) return pdfPath;
 
   const markdown = await fs.readFile(doc.absolutePath, "utf8");
-  const html = renderMarkdownHtml(doc, markdown, true, { themeCss: theme?.css });
+  const html = renderMarkdownHtml(doc, markdown, true, {
+    markdownDir: options.markdownDir,
+    themeCss: theme?.css,
+  });
   await fs.writeFile(htmlPath, html, "utf8");
 
   const browserPath = await findBrowser();
@@ -125,6 +141,75 @@ async function ensurePdfWithTheme(doc: DocMeta, cacheDir: string, theme: PdfThem
   return pdfPath;
 }
 
+async function preparePdfCacheSlot(doc: DocMeta, cacheDir: string, cacheKey: string) {
+  const index = await loadPdfCacheIndex(cacheDir);
+  const oldCacheKey = index[doc.relativePath];
+
+  if (oldCacheKey && oldCacheKey !== cacheKey) {
+    await deletePdfCachePair(cacheDir, oldCacheKey);
+    jobIdsByCacheKey.delete(oldCacheKey);
+    jobs.delete(oldCacheKey);
+  }
+
+  if (oldCacheKey !== cacheKey) {
+    index[doc.relativePath] = cacheKey;
+    await savePdfCacheIndex(cacheDir, index);
+  }
+
+  await deleteUnindexedPdfCaches(cacheDir, new Set(Object.values(index)));
+}
+
+async function deletePdfCachePair(cacheDir: string, cacheKey: string) {
+  const { htmlPath, pdfPath } = getPdfCachePathsByKey(cacheDir, cacheKey);
+  await Promise.all([
+    fs.unlink(htmlPath).catch((error: unknown) => {
+      if (!isMissingFileError(error)) throw error;
+    }),
+    fs.unlink(pdfPath).catch((error: unknown) => {
+      if (!isMissingFileError(error)) throw error;
+    }),
+  ]);
+}
+
+async function deleteUnindexedPdfCaches(cacheDir: string, activeCacheKeys: Set<string>) {
+  const entries = await fs.readdir(cacheDir, { withFileTypes: true }).catch(() => []);
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isFile()) return;
+      const parsed = path.parse(entry.name);
+      if (parsed.ext !== ".html" && parsed.ext !== ".pdf") return;
+      if (activeCacheKeys.has(parsed.name)) return;
+
+      await fs.unlink(path.join(cacheDir, entry.name)).catch((error: unknown) => {
+        if (!isMissingFileError(error)) throw error;
+      });
+    }),
+  );
+}
+
+async function loadPdfCacheIndex(cacheDir: string): Promise<PdfCacheIndex> {
+  const indexPath = path.join(cacheDir, PDF_CACHE_INDEX_FILE);
+  const raw = await fs.readFile(indexPath, "utf8").catch(() => null);
+  if (!raw) return {};
+
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  return Object.fromEntries(
+    Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+async function savePdfCacheIndex(cacheDir: string, index: PdfCacheIndex) {
+  await fs.mkdir(cacheDir, { recursive: true });
+  const indexPath = path.join(cacheDir, PDF_CACHE_INDEX_FILE);
+  await fs.writeFile(`${indexPath}.tmp`, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+  await fs.rename(`${indexPath}.tmp`, indexPath);
+}
+
+function isMissingFileError(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
 function getPdfCachePathsByKey(cacheDir: string, cacheKey: string) {
   return {
     htmlPath: path.join(cacheDir, `${cacheKey}.html`),
@@ -132,9 +217,22 @@ function getPdfCachePathsByKey(cacheDir: string, cacheKey: string) {
   };
 }
 
-function getPdfCacheKey(doc: DocMeta, theme: PdfTheme | null) {
-  if (!theme) return sha256(Buffer.from(`${doc.relativePath}:${doc.hash}`));
-  return sha256(Buffer.from(`${doc.relativePath}:${doc.hash}:theme:${theme.cacheHash}`));
+function getPdfCacheKey(doc: DocMeta, theme: PdfTheme | null, options: PdfOptions = {}) {
+  const assetHash = getAssetCacheHash(options.assets);
+  if (!theme) {
+    return sha256(Buffer.from(`${PDF_RENDER_VERSION}:${doc.relativePath}:${doc.hash}:assets:${assetHash}`));
+  }
+  return sha256(
+    Buffer.from(`${PDF_RENDER_VERSION}:${doc.relativePath}:${doc.hash}:theme:${theme.cacheHash}:assets:${assetHash}`),
+  );
+}
+
+function getAssetCacheHash(assets?: AssetStore) {
+  if (!assets || assets.size === 0) return "";
+  return [...assets.values()]
+    .sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+    .map((asset) => `${asset.relativePath}:${asset.hash}`)
+    .join("|");
 }
 
 async function loadPdfTheme(options: PdfOptions): Promise<PdfTheme | null> {
@@ -152,13 +250,19 @@ async function loadPdfTheme(options: PdfOptions): Promise<PdfTheme | null> {
   };
 }
 
-async function runPdfJob(job: PdfJob, doc: DocMeta, cacheDir: string, theme: PdfTheme | null) {
+async function runPdfJob(
+  job: PdfJob,
+  doc: DocMeta,
+  cacheDir: string,
+  theme: PdfTheme | null,
+  options: PdfOptions,
+) {
   try {
     job.status = "rendering";
     job.progress = 60;
     job.message = "正在渲染 PDF...";
 
-    job.pdfPath = await ensurePdfWithTheme(doc, cacheDir, theme);
+    job.pdfPath = await ensurePdfWithTheme(doc, cacheDir, theme, options);
     job.status = "done";
     job.progress = 100;
     job.message = "生成完成，即将打开。";

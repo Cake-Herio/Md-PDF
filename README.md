@@ -114,7 +114,7 @@ npm install
 npm run dev
 ```
 
-也可以直接指定目录和端口：
+默认会监控当前用户桌面目录。也可以直接指定目录和端口：
 
 ```powershell
 npm run dev -- --dir "C:\Users\wenxiang\Desktop" --port 3333
@@ -125,6 +125,27 @@ npm run dev -- --dir "C:\Users\wenxiang\Desktop" --port 3333
 如果手机和电脑在同一个 Wi-Fi，优先用类似 `http://192.168.x.x:3333` 的地址。
 
 首页会按目录显示文件夹和当前目录下的 Markdown 文件。点击文件夹进入下一级，进入子目录后可以点“返回上级”回到上一层。
+
+### 图片资源目录
+
+Markdown 引用的本地图片统一放在监控根目录下的 `asset` 目录中，程序会监听这个目录内图片的新增、修改和删除。
+
+推荐结构：
+
+```text
+文章.md
+asset\demo.png
+asset\2026\example.jpg
+```
+
+Markdown 中使用相对路径引用：
+
+```markdown
+![示例](asset/demo.png)
+![示例](./asset/2026/example.jpg)
+```
+
+不建议引用监控根目录外的图片绝对路径，因为不同电脑上的 Typora 本地路径通常不一致。
 
 ### 选择性同步和删除
 
@@ -148,7 +169,7 @@ npm run dev -- --dir "C:\Users\wenxiang\Desktop" --sync all
 release\local-md-reader.cmd
 ```
 
-它会打开命令行窗口，并提示输入要监听的 Markdown 文件夹路径。
+它会打开命令行窗口，并默认监听当前用户桌面目录。
 
 ## PDF 说明
 
