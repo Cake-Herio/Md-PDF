@@ -114,10 +114,12 @@ npm install
 npm run dev
 ```
 
-默认会监控当前用户桌面目录。也可以直接指定目录和端口：
+本地监听端默认会监控当前用户桌面目录，并使用端口 `50002`。服务器端默认使用端口 `50001`。
+
+也可以直接指定目录和端口：
 
 ```powershell
-npm run dev -- --dir "C:\Users\wenxiang\Desktop" --port 3333
+npm run dev -- --dir "C:\Users\wenxiang\Desktop" --port 50002
 ```
 
 启动后，电脑浏览器或 iPhone Safari 打开程序输出的地址即可。

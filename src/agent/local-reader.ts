@@ -26,10 +26,11 @@ const appRoot = process.cwd();
 const stateDir = path.join(appRoot, ".md-local-reader");
 const cacheDir = path.join(stateDir, "pdf-cache");
 const statePath = path.join(stateDir, "state.json");
+const defaultPort = 50002;
 
 export async function startLocalReader() {
   const args = parseArgs(process.argv.slice(2));
-  const port = Number(args.port ?? 3000);
+  const port = Number(args.port ?? defaultPort);
   const markdownDir = await resolveMarkdownDir(args.dir);
   const themeCssPath = await resolveThemeCssPath(args.themeCss ?? process.env.TYPORA_THEME_CSS);
   const state = await loadReaderState(statePath);
@@ -71,12 +72,9 @@ export async function startLocalReader() {
     themeCssPath,
   });
 
-  listenWithPortFallback(server, port, (actualPort) => {
-    if (actualPort !== port) {
-      console.log(`Port ${port} is in use. Using port ${actualPort} instead.`);
-    }
-    const actualLocalUrl = `http://localhost:${actualPort}`;
-    const phoneUrls = getLanIPv4().map((ip) => `http://${ip}:${actualPort}`);
+  listenOnPort(server, port, () => {
+    const actualLocalUrl = `http://localhost:${port}`;
+    const phoneUrls = getLanIPv4().map((ip) => `http://${ip}:${port}`);
     console.log("");
     console.log("Markdown PDF Reader is running.");
     console.log(`Markdown folder: ${markdownDir}`);
@@ -110,37 +108,30 @@ export async function startLocalReader() {
       pdfWarmup.scheduleAll("asset deleted");
     },
   });
-
-  if (docs.size > 0) {
-    pdfWarmup.scheduleAll("startup scan");
-  }
 }
 
-function listenWithPortFallback(
+function listenOnPort(
   server: ReturnType<typeof createServer>,
-  preferredPort: number,
-  onListening: (actualPort: number) => void,
+  port: number,
+  onListening: () => void,
 ) {
-  const tryListen = (candidatePort: number) => {
-    const onError = (error: NodeJS.ErrnoException) => {
-      server.off("error", onError);
-      if (error.code === "EADDRINUSE") {
-        tryListen(candidatePort + 1);
-        return;
-      }
-
-      console.error(error);
+  const onError = (error: NodeJS.ErrnoException) => {
+    server.off("error", onError);
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${port} is already in use. Please stop the process using this port, then restart.`);
       process.exitCode = 1;
-    };
+      return;
+    }
 
-    server.once("error", onError);
-    server.listen(candidatePort, "0.0.0.0", () => {
-      server.off("error", onError);
-      onListening(candidatePort);
-    });
+    console.error(error);
+    process.exitCode = 1;
   };
 
-  tryListen(preferredPort);
+  server.once("error", onError);
+  server.listen(port, "0.0.0.0", () => {
+    server.off("error", onError);
+    onListening();
+  });
 }
 
 async function resolveMarkdownDir(inputDir?: string) {
