@@ -35,7 +35,7 @@ export async function startLocalReader() {
   const args = parseArgs(process.argv.slice(2));
   const port = Number(args.port ?? 3000);
   const markdownDir = await resolveMarkdownDir(args.dir);
-  const themeCssPath = await resolveOptionalFile(args.themeCss ?? process.env.TYPORA_THEME_CSS);
+  const themeCssPath = await resolveThemeCssPath(args.themeCss ?? process.env.TYPORA_THEME_CSS);
   const state = await loadReaderState(statePath);
   const docs = createDocStore();
   const assets = createAssetStore();
@@ -53,8 +53,13 @@ export async function startLocalReader() {
     shouldSkip: (relativePath: string) => isDeletedPath(relativePath, state),
   };
 
+  const shouldSyncAssets = state.selectedPaths.length > 0;
   await scanAll(markdownDir, docs, scannerOptions);
-  await scanAllAssets(markdownDir, assets);
+  if (shouldSyncAssets) {
+    await scanAllAssets(markdownDir, assets);
+  } else {
+    console.log("Asset sync disabled because no Markdown files are selected.");
+  }
 
   const app = createApp({
     markdownDir,
@@ -67,22 +72,30 @@ export async function startLocalReader() {
   });
   const server = createServer(app);
 
-  server.listen(port, "0.0.0.0", () => {
+  listenWithPortFallback(server, port, (actualPort) => {
+    if (actualPort !== port) {
+      console.log(`Port ${port} is in use. Using port ${actualPort} instead.`);
+    }
+    const actualLocalUrl = `http://localhost:${actualPort}`;
+    const phoneUrls = getLanIPv4().map((ip) => `http://${ip}:${actualPort}`);
     console.log("");
+    console.log("Markdown PDF Reader is running.");
     console.log(`Markdown folder: ${markdownDir}`);
     console.log(`Sync selection:  ${formatSelection(state.selectedPaths)}`);
     if (themeCssPath) console.log(`Typora theme CSS: ${themeCssPath}`);
-    console.log(`Local address:   http://localhost:${port}`);
-    for (const ip of getLanIPv4()) {
-      console.log(`Phone address:   http://${ip}:${port}`);
+    console.log(`Local address:   ${actualLocalUrl}`);
+    for (const phoneUrl of phoneUrls) {
+      console.log(`Phone address:   ${phoneUrl}`);
     }
+    console.log(`Files API:       ${actualLocalUrl}/api/files`);
+    console.log(`Assets API:      ${actualLocalUrl}/api/assets`);
     console.log("");
-    console.log("Keep this terminal open. Press Ctrl+C to stop.");
+    console.log("Keep this CLI open to view runtime logs. Press Ctrl+C to stop.");
   });
 
   watchMarkdownDir(markdownDir, docs, {
     ...scannerOptions,
-    assets,
+    assets: shouldSyncAssets ? assets : undefined,
     onDelete: async (relativePath) => {
       const deletion = createDeletionRecord(relativePath, "local", state.deviceId);
       addDeletionRecord(state, deletion);
@@ -95,8 +108,39 @@ export async function startLocalReader() {
   });
 }
 
+function listenWithPortFallback(
+  server: ReturnType<typeof createServer>,
+  preferredPort: number,
+  onListening: (actualPort: number) => void,
+) {
+  const tryListen = (candidatePort: number) => {
+    const onError = (error: NodeJS.ErrnoException) => {
+      server.off("error", onError);
+      if (error.code === "EADDRINUSE") {
+        tryListen(candidatePort + 1);
+        return;
+      }
+
+      console.error(error);
+      process.exitCode = 1;
+    };
+
+    server.once("error", onError);
+    server.listen(candidatePort, "0.0.0.0", () => {
+      server.off("error", onError);
+      onListening(candidatePort);
+    });
+  };
+
+  tryListen(preferredPort);
+}
+
 async function resolveMarkdownDir(inputDir?: string) {
-  const dir = inputDir?.trim() || await resolveDesktopDir();
+  const defaultDir = await resolveDesktopDir();
+  const dir = inputDir?.trim() || await promptOptionalPath(
+    `请输入要监听的 Markdown 根目录（直接回车使用桌面：${defaultDir}）: `,
+    defaultDir,
+  );
 
   const resolved = path.resolve(dir.replace(/^"|"$/g, ""));
   const stat = await fs.stat(resolved).catch(() => null);
@@ -118,6 +162,20 @@ async function resolveDesktopDir() {
   }
 
   return candidates[0];
+}
+
+async function resolveThemeCssPath(inputPath?: string) {
+  const cssPath = inputPath?.trim() || await promptOptionalPath(
+    "请输入自定义 CSS 文件路径（直接回车使用默认样式）: ",
+  );
+  return resolveOptionalFile(cssPath);
+}
+
+async function promptOptionalPath(question: string, defaultValue = "") {
+  const rl = createInterface({ input, output });
+  const answer = await rl.question(question);
+  rl.close();
+  return answer.trim() || defaultValue;
 }
 
 async function resolveOptionalFile(inputPath?: string) {
@@ -161,17 +219,19 @@ async function chooseSelectedPaths(markdownDir: string, currentSelection: string
   const choices = buildSelectionChoices(markdownFiles);
   console.log("");
   console.log("请选择要同步/监听的 Markdown 文件或文件夹：");
-  console.log("0. 全部 Markdown 文件");
+  console.log("0. 不同步任何文件");
+  console.log("直接回车：全部 Markdown 文件");
   choices.forEach((choice, index) => {
     console.log(`${index + 1}. [${choice.type === "folder" ? "目录" : "文件"}] ${choice.path}`);
   });
 
   const rl = createInterface({ input, output });
-  const answer = await rl.question("输入编号（可用逗号分隔，例如 1,3,5；直接回车选择全部）: ");
+  const answer = await rl.question("输入编号（可用逗号分隔，例如 1,3,5；输入 0 表示不同步；直接回车选择全部）: ");
   rl.close();
 
   const trimmed = answer.trim();
-  if (!trimmed || trimmed === "0" || /^all$/i.test(trimmed)) return ["*"];
+  if (trimmed === "0" || /^none$/i.test(trimmed)) return [];
+  if (!trimmed || /^all$/i.test(trimmed)) return ["*"];
 
   const selected = new Set<string>();
   for (const token of trimmed.split(",")) {

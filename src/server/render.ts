@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { marked } from "marked";
 import { escapeHtml, formatBytes } from "../shared/format.js";
 import { isAssetPath, normalizeRelativePath } from "../shared/path.js";
@@ -130,9 +130,8 @@ function readView(fileName: string) {
 }
 
 function resolveViewDir() {
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    path.join(moduleDir, "views"),
+    path.join(path.dirname(process.execPath), "views"),
     path.join(process.cwd(), "src", "server", "views"),
     path.join(process.cwd(), "dist", "server", "views"),
   ];

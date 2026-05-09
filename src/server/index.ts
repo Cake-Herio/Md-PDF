@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { promises as fs } from "node:fs";
 import { createAssetStore, createDocStore, scanAll, scanAllAssets } from "../shared/doc-store.js";
 import { loadReaderState, saveReaderState } from "../shared/state.js";
@@ -36,17 +38,51 @@ async function startServer() {
   });
   const server = createServer(app);
 
-  server.listen(port, "0.0.0.0", () => {
+  listenWithPortFallback(server, port, (actualPort) => {
+    if (actualPort !== port) {
+      console.log(`Port ${port} is in use. Using port ${actualPort} instead.`);
+    }
+    const localUrl = `http://localhost:${actualPort}`;
+    const phoneUrls = getLanIPv4().map((ip) => `http://${ip}:${actualPort}`);
     console.log("");
     console.log(`Server storage:  ${markdownDir}`);
     if (themeCssPath) console.log(`Typora theme CSS: ${themeCssPath}`);
-    console.log(`Local address:   http://localhost:${port}`);
-    for (const ip of getLanIPv4()) {
-      console.log(`Phone address:   http://${ip}:${port}`);
+    console.log(`Local address:   ${localUrl}`);
+    for (const phoneUrl of phoneUrls) {
+      console.log(`Phone address:   ${phoneUrl}`);
     }
+    console.log(`Files API:       ${localUrl}/api/files`);
+    console.log(`Assets API:      ${localUrl}/api/assets`);
     console.log("");
     console.log("Server is running. Press Ctrl+C to stop.");
   });
+}
+
+function listenWithPortFallback(
+  server: ReturnType<typeof createServer>,
+  preferredPort: number,
+  onListening: (actualPort: number) => void,
+) {
+  const tryListen = (candidatePort: number) => {
+    const onError = (error: NodeJS.ErrnoException) => {
+      server.off("error", onError);
+      if (error.code === "EADDRINUSE") {
+        tryListen(candidatePort + 1);
+        return;
+      }
+
+      console.error(error);
+      process.exitCode = 1;
+    };
+
+    server.once("error", onError);
+    server.listen(candidatePort, "0.0.0.0", () => {
+      server.off("error", onError);
+      onListening(candidatePort);
+    });
+  };
+
+  tryListen(preferredPort);
 }
 
 async function resolveMarkdownDir(inputDir?: string) {
@@ -106,5 +142,12 @@ function getLanIPv4() {
 
 startServer().catch((error) => {
   console.error(error);
-  process.exit(1);
+  waitBeforeExit().finally(() => process.exit(1));
 });
+
+async function waitBeforeExit() {
+  if (!process.stdin.isTTY) return;
+  const rl = createInterface({ input, output });
+  await rl.question("程序启动失败。按回车键退出...");
+  rl.close();
+}

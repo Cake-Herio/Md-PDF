@@ -15,8 +15,9 @@
     "bundle:agent": "esbuild src/agent/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=build/agent.cjs",
     "bundle:server": "esbuild src/server/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=build/server.cjs",
     "package:win": "npm run package:agent",
-    "package:agent": "npm run bundle:agent && pkg build/agent.cjs --targets node20-win-x64 --output release/md-pdf-agent.exe",
-    "package:server": "npm run bundle:server && pkg build/server.cjs --targets node20-win-x64 --output release/md-pdf-server.exe"
+    "copy:views": "node -e \"require('fs').cpSync('src/server/views', 'release/views', { recursive: true })\"",
+    "package:agent": "npm run bundle:agent && pkg build/agent.cjs --targets node20-win-x64 --output release/md-pdf-agent.exe && npm run copy:views",
+    "package:server": "npm run bundle:server && pkg build/server.cjs --targets node20-win-x64 --output release/md-pdf-server.exe && npm run copy:views"
   },
   "dependencies": {
     "chokidar": "^4.0.3",
