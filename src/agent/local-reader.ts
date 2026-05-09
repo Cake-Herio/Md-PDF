@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { promises as fs } from "node:fs";
 import { createApp } from "../server/app.js";
+import { createPdfWarmup } from "../server/pdf-warmup.js";
 import {
   createAssetStore,
   createDocStore,
@@ -15,12 +16,8 @@ import {
   watchMarkdownDir,
 } from "./scanner.js";
 import {
-  addDeletionRecord,
-  createDeletionRecord,
-  isDeletedPath,
   isSelectedPath,
   loadReaderState,
-  processPendingDeletions,
   saveReaderState,
 } from "../shared/state.js";
 import { isMarkdown, shouldIgnore, toRelative } from "../shared/path.js";
@@ -29,7 +26,6 @@ const appRoot = process.cwd();
 const stateDir = path.join(appRoot, ".md-local-reader");
 const cacheDir = path.join(stateDir, "pdf-cache");
 const statePath = path.join(stateDir, "state.json");
-const trashDir = path.join(stateDir, "trash");
 
 export async function startLocalReader() {
   const args = parseArgs(process.argv.slice(2));
@@ -41,16 +37,12 @@ export async function startLocalReader() {
   const assets = createAssetStore();
 
   await fs.mkdir(cacheDir, { recursive: true });
-  if (await processPendingDeletions(markdownDir, trashDir, state)) {
-    await saveReaderState(statePath, state);
-  }
 
   state.selectedPaths = await chooseSelectedPaths(markdownDir, state.selectedPaths, args.sync);
   await saveReaderState(statePath, state);
 
   const scannerOptions = {
     shouldSync: (relativePath: string) => isSelectedPath(relativePath, state.selectedPaths),
-    shouldSkip: (relativePath: string) => isDeletedPath(relativePath, state),
   };
 
   const shouldSyncAssets = state.selectedPaths.length > 0;
@@ -71,6 +63,13 @@ export async function startLocalReader() {
     saveState: () => saveReaderState(statePath, state),
   });
   const server = createServer(app);
+  const pdfWarmup = createPdfWarmup({
+    assets,
+    cacheDir,
+    docs,
+    markdownDir,
+    themeCssPath,
+  });
 
   listenWithPortFallback(server, port, (actualPort) => {
     if (actualPort !== port) {
@@ -97,15 +96,24 @@ export async function startLocalReader() {
     ...scannerOptions,
     assets: shouldSyncAssets ? assets : undefined,
     onDelete: async (relativePath) => {
-      const deletion = createDeletionRecord(relativePath, "local", state.deviceId);
-      addDeletionRecord(state, deletion);
-      await saveReaderState(statePath, state);
-      console.log(`Synced local delete tombstone: ${relativePath}`);
+      console.log(`Removed local watched file from list: ${relativePath}`);
+    },
+    onChange: (relativePath) => {
+      pdfWarmup.scheduleOne(relativePath, "Markdown changed");
+    },
+    onAssetChange: (relativePath) => {
+      console.log(`Detected local asset change: ${relativePath}`);
+      pdfWarmup.scheduleAll("asset changed");
     },
     onAssetDelete: async (relativePath) => {
       console.log(`Detected local asset delete: ${relativePath}`);
+      pdfWarmup.scheduleAll("asset deleted");
     },
   });
+
+  if (docs.size > 0) {
+    pdfWarmup.scheduleAll("startup scan");
+  }
 }
 
 function listenWithPortFallback(

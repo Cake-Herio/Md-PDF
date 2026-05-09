@@ -57,6 +57,19 @@ export async function hasPdf(doc: DocMeta, cacheDir: string, options: PdfOptions
   return existsSync((await getPdfCachePaths(doc, cacheDir, options)).pdfPath);
 }
 
+export async function deletePdfCacheForDoc(relativePath: string, cacheDir: string) {
+  const index = await loadPdfCacheIndex(cacheDir);
+  const cacheKey = index[relativePath];
+  if (!cacheKey) return false;
+
+  await deletePdfCachePair(cacheDir, cacheKey);
+  delete index[relativePath];
+  jobIdsByCacheKey.delete(cacheKey);
+  jobs.delete(cacheKey);
+  await savePdfCacheIndex(cacheDir, index);
+  return true;
+}
+
 export async function startPdfJob(
   doc: DocMeta,
   cacheDir: string,

@@ -7,6 +7,7 @@ import { promises as fs } from "node:fs";
 import { createAssetStore, createDocStore, scanAll, scanAllAssets } from "../shared/doc-store.js";
 import { loadReaderState, saveReaderState } from "../shared/state.js";
 import { createApp } from "./app.js";
+import { createPdfWarmup } from "./pdf-warmup.js";
 
 const appRoot = process.cwd();
 const stateDir = path.join(appRoot, ".md-pdf-server");
@@ -37,6 +38,13 @@ async function startServer() {
     saveState: () => saveReaderState(statePath, state),
   });
   const server = createServer(app);
+  const pdfWarmup = createPdfWarmup({
+    assets,
+    cacheDir,
+    docs,
+    markdownDir,
+    themeCssPath,
+  });
 
   listenWithPortFallback(server, port, (actualPort) => {
     if (actualPort !== port) {
@@ -56,6 +64,10 @@ async function startServer() {
     console.log("");
     console.log("Server is running. Press Ctrl+C to stop.");
   });
+
+  if (docs.size > 0) {
+    pdfWarmup.scheduleAll("startup scan");
+  }
 }
 
 function listenWithPortFallback(

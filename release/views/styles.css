@@ -117,10 +117,10 @@ input[type="search"] {
 
 .doc-list {
   list-style: none;
-  margin: 14px 0 0;
+  margin: 10px 0 0;
   padding: 0;
   display: grid;
-  gap: 10px;
+  gap: 7px;
 }
 
 .doc-item,
@@ -128,8 +128,8 @@ input[type="search"] {
 .empty {
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  padding: 16px;
+  border-radius: 11px;
+  padding: 10px 12px;
 }
 
 .select-row {
@@ -158,9 +158,9 @@ input[type="search"] {
 .folder-link {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 64px;
-  padding: 14px 16px;
+  gap: 10px;
+  min-height: 50px;
+  padding: 10px 12px;
   color: inherit;
   text-decoration: none;
 }
@@ -168,12 +168,12 @@ input[type="search"] {
 .folder-icon {
   display: inline-grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   background: #fff8c5;
   color: #7d4e00;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
   flex: 0 0 auto;
@@ -181,7 +181,7 @@ input[type="search"] {
 
 .folder-main {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
   flex: 1;
 }
@@ -189,7 +189,7 @@ input[type="search"] {
 .folder-name,
 .title {
   color: #24292f;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -197,7 +197,7 @@ input[type="search"] {
 .path,
 .meta {
   color: #667085;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .folder-arrow {
@@ -208,19 +208,19 @@ input[type="search"] {
 
 .title {
   display: block;
-  color: #0969da;
-  font-size: 18px;
+  color: #24292f;
+  font-size: 16px;
   text-decoration: none;
-  line-height: 1.45;
+  line-height: 1.32;
 }
 
 .path,
 .meta {
-  margin-top: 6px;
+  margin-top: 3px;
 }
 
 .actions {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .modal-backdrop {

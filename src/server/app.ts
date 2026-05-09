@@ -9,8 +9,9 @@ import path from "node:path";
 import type { AssetStore, DocMeta, DocStore, ReaderState } from "../shared/types.js";
 import { buildContentDisposition } from "../shared/format.js";
 import { isAssetPath, isImageAsset, isInside, normalizeRelativePath } from "../shared/path.js";
-import { addDeletionRecord, createDeletionRecord } from "../shared/state.js";
+import { isPinnedPath, setPinnedPath } from "../shared/state.js";
 import {
+  deletePdfCacheForDoc,
   ensurePdf,
   getPdfCachePaths,
   getPdfJob,
@@ -45,7 +46,7 @@ export function createApp({
 
   app.get("/", (req, res) => {
     const currentDir = normalizeDirectoryQuery(req.query.dir);
-    res.type("html").send(renderIndexHtml(buildDirectoryView(docs, currentDir)));
+    res.type("html").send(renderIndexHtml(buildDirectoryView(docs, currentDir, state)));
   });
 
   app.get("/api/files", (_req, res) => {
@@ -54,12 +55,6 @@ export function createApp({
 
   app.get("/api/assets", (_req, res) => {
     res.json([...assets.values()].map(({ absolutePath: _absolutePath, ...asset }) => asset));
-  });
-
-  app.get("/api/deletions", (req, res) => {
-    const since = Number(req.query.since ?? 0);
-    const deletions = state.deletions.filter((deletion) => deletion.deletedAt > since);
-    res.json({ deletions });
   });
 
   app.post("/api/files/delete", async (req, res) => {
@@ -78,21 +73,36 @@ export function createApp({
         continue;
       }
 
-      const existed = docs.delete(relativePath);
-      const deletion = addDeletionRecord(
-        state,
-        createDeletionRecord(relativePath, "mobile", state.deviceId),
-      );
+      const deleted = await deleteServerPath(relativePath, markdownDir, cacheDir, docs);
+      state.pinnedPaths = state.pinnedPaths.filter((item) => item !== relativePath && !item.startsWith(`${relativePath}/`));
 
       results.push({
         path: relativePath,
-        status: existed ? "deleted" : "not_found",
-        deletionId: deletion.id,
+        status: deleted.files > 0 ? "deleted" : "not_found",
+        deletedFiles: deleted.files,
+        removedPdfCaches: deleted.pdfCaches,
       });
     }
 
     await saveState();
     res.json({ results });
+  });
+
+  app.post("/api/files/pin", async (req, res) => {
+    const relativePath = normalizeFileQuery(String(req.body?.path ?? ""));
+    if (!relativePath) {
+      res.status(400).json({ error: "path is required." });
+      return;
+    }
+    if (!docs.has(relativePath)) {
+      res.status(404).json({ error: "Only Markdown files can be pinned." });
+      return;
+    }
+
+    const pinned = Boolean(req.body?.pinned);
+    setPinnedPath(state, relativePath, pinned);
+    await saveState();
+    res.json({ path: relativePath, pinned });
   });
 
   app.get("/view", async (req, res) => {
@@ -244,8 +254,40 @@ function normalizeAssetQuery(value: unknown) {
   return normalized;
 }
 
-function buildDirectoryView(docs: DocStore, currentDir: string): DirectoryView {
-  const folderMap = new Map<string, { name: string; relativePath: string; docCount: number }>();
+function isMissingFileError(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function deleteServerPath(relativePath: string, markdownDir: string, cacheDir: string, docs: DocStore) {
+  const targets = [...docs.values()].filter((doc) => {
+    return doc.relativePath === relativePath || doc.relativePath.startsWith(`${relativePath}/`);
+  });
+  let pdfCaches = 0;
+
+  for (const doc of targets) {
+    docs.delete(doc.relativePath);
+    await fs.unlink(doc.absolutePath).catch((error: unknown) => {
+      if (!isMissingFileError(error)) throw error;
+    });
+    if (await deletePdfCacheForDoc(doc.relativePath, cacheDir)) pdfCaches += 1;
+  }
+
+  await removeEmptyParents(markdownDir, path.resolve(markdownDir, relativePath));
+  return { files: targets.length, pdfCaches };
+}
+
+async function removeEmptyParents(root: string, startPath: string) {
+  let current = path.dirname(startPath);
+  while (isInside(root, current)) {
+    const entries = await fs.readdir(current).catch(() => null);
+    if (!entries || entries.length > 0) return;
+    await fs.rmdir(current).catch(() => undefined);
+    current = path.dirname(current);
+  }
+}
+
+function buildDirectoryView(docs: DocStore, currentDir: string, state: ReaderState): DirectoryView {
+  const folderMap = new Map<string, { name: string; pinned: boolean; relativePath: string; docCount: number }>();
   const files: DocMeta[] = [];
   const prefix = currentDir ? `${currentDir}/` : "";
 
@@ -259,13 +301,14 @@ function buildDirectoryView(docs: DocStore, currentDir: string): DirectoryView {
     if (!firstSegment) continue;
 
     if (rest.length === 0) {
-      files.push(doc);
+      files.push({ ...doc, pinned: isPinnedPath(doc.relativePath, state) });
       continue;
     }
 
     const folderPath = prefix ? `${currentDir}/${firstSegment}` : firstSegment;
     const folder = folderMap.get(folderPath) ?? {
       name: firstSegment,
+      pinned: false,
       relativePath: folderPath,
       docCount: 0,
     };
@@ -276,8 +319,14 @@ function buildDirectoryView(docs: DocStore, currentDir: string): DirectoryView {
   return {
     currentDir,
     parentDir: currentDir ? currentDir.split("/").slice(0, -1).join("/") : null,
-    folders: [...folderMap.values()].sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN")),
-    files: files.sort((a, b) => a.relativePath.localeCompare(b.relativePath, "zh-Hans-CN")),
+    folders: [...folderMap.values()].sort(comparePinnedEntries),
+    files: files.sort(comparePinnedEntries),
+    pinnedPaths: state.pinnedPaths,
     totalDocs: docs.size,
   };
+}
+
+function comparePinnedEntries(a: { pinned?: boolean; relativePath: string }, b: { pinned?: boolean; relativePath: string }) {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+  return a.relativePath.localeCompare(b.relativePath, "zh-Hans-CN");
 }

@@ -17,7 +17,9 @@ import {
 type WatchOptions = ScannerOptions & {
   onDelete?: (relativePath: string) => void | Promise<void>;
   assets?: AssetStore;
+  onAssetChange?: (relativePath: string) => void | Promise<void>;
   onAssetDelete?: (relativePath: string) => void | Promise<void>;
+  onChange?: (relativePath: string) => void | Promise<void>;
 };
 
 export function watchMarkdownDir(markdownDir: string, docs: DocStore, options: WatchOptions = {}) {
@@ -62,9 +64,12 @@ function scheduleRefresh(
     key,
     setTimeout(async () => {
       pending.delete(key);
-      await upsertDoc(markdownDir, filePath, docs).catch((error) => {
+      try {
+        await upsertDoc(markdownDir, filePath, docs);
+        await options.onChange?.(key);
+      } catch (error) {
         console.error(`Failed to refresh ${key}:`, error);
-      });
+      }
     }, 700),
   );
 }
@@ -84,9 +89,12 @@ function scheduleAssetRefresh(
     key,
     setTimeout(async () => {
       pending.delete(key);
-      await upsertAsset(markdownDir, filePath, options.assets!).catch((error) => {
+      try {
+        await upsertAsset(markdownDir, filePath, options.assets!);
+        await options.onAssetChange?.(key);
+      } catch (error) {
         console.error(`Failed to refresh asset ${key}:`, error);
-      });
+      }
     }, 700),
   );
 }

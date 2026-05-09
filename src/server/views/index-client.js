@@ -4,6 +4,8 @@ const selectModeButton = document.querySelector("#select-mode-button");
 const deleteSelectedButton = document.querySelector("#delete-selected-button");
 const cancelSelectButton = document.querySelector("#cancel-select-button");
 const fileSelects = [...document.querySelectorAll(".file-select")];
+const pinButtons = [...document.querySelectorAll(".item-pin-action")];
+const deleteButtons = [...document.querySelectorAll(".item-delete-action")];
 
 search?.addEventListener("input", () => {
   const keyword = search.value.trim().toLowerCase();
@@ -39,7 +41,7 @@ deleteSelectedButton.addEventListener("click", async () => {
   const paths = selectedPaths();
   if (paths.length === 0) return;
   const confirmed = window.confirm(
-    "确认删除选中的 " + paths.length + " 个服务器文件？其他电脑下次启动同步程序时，本地同路径文件会移入回收站。",
+    "确认删除选中的 " + paths.length + " 个服务器文件和 PDF 缓存？",
   );
   if (!confirmed) return;
 
@@ -58,6 +60,57 @@ deleteSelectedButton.addEventListener("click", async () => {
     deleteSelectedButton.disabled = false;
   }
 });
+
+async function deletePath(path, kind) {
+  const confirmed = window.confirm(
+    kind === "folder"
+      ? "确认删除该文件夹下所有服务器 Markdown 和 PDF 缓存？"
+      : "确认删除该服务器 Markdown 和 PDF 缓存？",
+  );
+  if (!confirmed) return;
+
+  const response = await fetch("/api/files/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths: [path] }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  window.location.reload();
+}
+
+async function setPinned(path, pinned) {
+  const response = await fetch("/api/files/pin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, pinned }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  window.location.reload();
+}
+
+for (const button of pinButtons) {
+  button.addEventListener("click", async () => {
+    const item = button.closest(".browse-item");
+    if (!item || item.dataset.kind !== "file") return;
+    try {
+      await setPinned(item.dataset.path, item.dataset.pinned !== "true");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  });
+}
+
+for (const button of deleteButtons) {
+  button.addEventListener("click", async () => {
+    const item = button.closest(".browse-item");
+    if (!item) return;
+    try {
+      await deletePath(item.dataset.path, item.dataset.kind);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  });
+}
 
 const modal = document.querySelector("#pdf-modal");
 const closeButton = document.querySelector("#pdf-modal-close");
@@ -151,6 +204,14 @@ async function startPdf(path, title) {
 for (const link of document.querySelectorAll(".pdf-action")) {
   link.addEventListener("click", (event) => {
     event.preventDefault();
+    event.stopPropagation();
+    startPdf(link.dataset.pdfPath, link.dataset.pdfTitle);
+  });
+
+  link.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
     startPdf(link.dataset.pdfPath, link.dataset.pdfTitle);
   });
 }

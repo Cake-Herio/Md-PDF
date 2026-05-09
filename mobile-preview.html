@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Markdown PDF Reader - Mobile Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7f9;
+      color: #1f2328;
+    }
+
+    body {
+      margin: 0;
+      background: #f6f7f9;
+    }
+
+    .shell {
+      max-width: 430px;
+      margin: 0 auto;
+      padding: 12px 10px 32px;
+      animation: page-enter 180ms ease-out both;
+    }
+
+    .hero {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      backdrop-filter: blur(8px);
+    }
+
+    h1 {
+      margin: 0 0 5px;
+      font-size: 21px;
+      line-height: 1.25;
+    }
+
+    .summary {
+      margin: 0 0 10px;
+      color: #667085;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 10px;
+      color: #667085;
+      font-size: 13px;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border: 1px solid #d0d7de;
+      border-radius: 999px;
+      padding: 0 10px;
+      color: #0969da;
+      background: #f6f8fa;
+      font-weight: 650;
+      text-decoration: none;
+      transition: background 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+    }
+
+    .current-dir {
+      min-width: 0;
+      word-break: break-all;
+    }
+
+    .bulk-actions {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 10px;
+    }
+
+    .bulk-actions button {
+      min-height: 31px;
+      border: 1px solid #d0d7de;
+      border-radius: 999px;
+      padding: 0 12px;
+      color: #0969da;
+      background: #f6f8fa;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    #search {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #d0d7de;
+      border-radius: 11px;
+      padding: 11px 12px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .doc-list {
+      list-style: none;
+      margin: 10px 0 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .browse-item {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+      animation: item-enter 220ms ease-out both;
+    }
+
+    .browse-item:nth-child(1) { animation-delay: 20ms; }
+    .browse-item:nth-child(2) { animation-delay: 36ms; }
+    .browse-item:nth-child(3) { animation-delay: 52ms; }
+    .browse-item:nth-child(4) { animation-delay: 68ms; }
+    .browse-item:nth-child(5) { animation-delay: 84ms; }
+    .browse-item:nth-child(n + 6) { animation-delay: 100ms; }
+
+    .pinned-panel {
+      list-style: none;
+      border: 1px solid #bfdbfe;
+      border-radius: 14px;
+      padding: 10px;
+      background: #eff6ff;
+      animation: item-enter 220ms ease-out both;
+    }
+
+    .pinned-panel-title {
+      margin: 0 0 8px;
+      color: #0969da;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .pinned-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 7px;
+    }
+
+    .browse-item.pinned,
+    .pinned-panel-item {
+      border-color: #bfdbfe;
+    }
+
+    .browse-item.pinned:not(.pinned-panel-item) .title::after {
+      content: "置顶";
+      display: inline-flex;
+      margin-left: 7px;
+      border-radius: 999px;
+      padding: 1px 6px;
+      color: #0969da;
+      background: #ddf4ff;
+      font-size: 11px;
+      font-weight: 750;
+      vertical-align: 2px;
+    }
+
+    .folder-item {
+      position: relative;
+      padding: 0;
+    }
+
+    .doc-item {
+      position: relative;
+      padding: 0;
+    }
+
+    .folder-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 50px;
+      padding: 10px 12px;
+      padding-right: 72px;
+      color: inherit;
+      text-decoration: none;
+      transition: background 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+    }
+
+    .folder-icon,
+    .doc-icon {
+      display: inline-grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: #fff8c5;
+      color: #7d4e00;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      flex: 0 0 auto;
+    }
+
+    .doc-icon {
+      background: #ddf4ff;
+      color: #0969da;
+    }
+
+    .folder-main {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .folder-name {
+      color: #24292f;
+      font-size: 15px;
+      font-weight: 750;
+      word-break: break-all;
+    }
+
+    .folder-meta {
+      color: #667085;
+      font-size: 12px;
+    }
+
+    .item-main {
+      display: block;
+      position: relative;
+      padding: 10px 12px;
+      color: inherit;
+      text-decoration: none;
+      transition: margin-left 170ms ease, padding-right 170ms ease;
+    }
+
+    .item-actions {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      z-index: 2;
+      display: flex;
+      gap: 6px;
+      transition: opacity 140ms ease, transform 140ms ease;
+    }
+
+    .item-action {
+      min-height: 26px;
+      border: 1px solid #d0d7de;
+      border-radius: 999px;
+      padding: 0 8px;
+      color: #0969da;
+      background: #f6f8fa;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .item-pin-action {
+      color: #7d4e00;
+      border-color: #f8e3a1;
+      background: #fff8c5;
+    }
+
+    .item-delete-action {
+      color: #cf222e;
+      border-color: #ffebe9;
+      background: #ffebe9;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-right: 104px;
+      min-height: 34px;
+    }
+
+    .title {
+      flex: 1;
+      color: #24292f;
+      font-size: 15.5px;
+      font-weight: 750;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .path,
+    .meta {
+      margin-top: 0;
+      color: #667085;
+      font-size: 12px;
+      line-height: 1.35;
+      word-break: break-all;
+    }
+
+    .doc-footer {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 2px;
+    }
+
+    .doc-info {
+      min-width: 0;
+      flex: 1;
+      display: grid;
+      gap: 1px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 0;
+      flex: 0 0 auto;
+    }
+
+    .actions a,
+    .actions span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border: 1px solid #d0d7de;
+      border-radius: 999px;
+      padding: 0 12px;
+      color: #0969da;
+      background: #f6f8fa;
+      font-size: 13px;
+      font-weight: 650;
+      text-decoration: none;
+      box-sizing: border-box;
+      transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+    }
+
+    .actions .primary {
+      border-color: #0969da;
+      color: #fff;
+      background: #0969da;
+    }
+
+    .actions a:active,
+    .back-link:active,
+    .folder-link:active,
+    .bulk-actions button:active {
+      transform: scale(0.98);
+    }
+
+    .actions a:hover,
+    .back-link:hover,
+    .folder-link:hover {
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+    }
+
+    @keyframes page-enter {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes item-enter {
+      from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.99);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes modal-backdrop-enter {
+      from {
+        opacity: 0;
+        backdrop-filter: blur(0);
+      }
+
+      to {
+        opacity: 1;
+        backdrop-filter: blur(4px);
+      }
+    }
+
+    @keyframes modal-card-enter {
+      from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.96);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes progress-enter {
+      from {
+        opacity: 0;
+        transform: scale(0.92);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .shell,
+      .browse-item {
+        animation: none;
+      }
+
+      .actions a,
+      .back-link,
+      .folder-link,
+      .bulk-actions button {
+        transition: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <h1>Markdown PDF Reader</h1>
+      <p class="summary">当前位于 根目录，共 2 个文件夹、5 个 Markdown 文件。</p>
+      <div class="breadcrumbs">
+        <a class="back-link" href="#">返回上级</a>
+        <span class="current-dir">根目录</span>
+      </div>
+      <div class="bulk-actions">
+        <button type="button">选择文件</button>
+        <button type="button">刷新</button>
+      </div>
+      <input id="search" type="search" placeholder="搜索文件名或路径" autocomplete="off" />
+    </header>
+
+    <ul class="doc-list">
+      <li class="pinned-panel">
+        <div class="pinned-panel-title">置顶文件</div>
+        <ul class="pinned-list">
+          <li class="browse-item doc-item pinned pinned-panel-item">
+            <a class="item-main file-main" href="#">
+              <div class="item-actions">
+                <button class="item-action item-pin-action" type="button">取消置顶</button>
+                <button class="item-action item-delete-action" type="button">删除</button>
+              </div>
+              <div class="title-row">
+                <span class="doc-icon">MD</span>
+                <div class="title">优秀学子统计</div>
+              </div>
+              <div class="doc-footer">
+                <div class="doc-info">
+                  <div class="meta">52.1 KB</div>
+                  <div class="meta">2026/5/9 16:21:30</div>
+                </div>
+                <div class="actions">
+                  <span class="primary" role="button" tabindex="0">导出 PDF</span>
+                </div>
+              </div>
+            </a>
+          </li>
+        </ul>
+      </li>
+
+      <li class="browse-item folder-item">
+        <div class="item-actions">
+          <button class="item-action item-delete-action" type="button">删除</button>
+        </div>
+        <a class="folder-link" href="#">
+          <span class="folder-icon">DIR</span>
+          <span class="folder-main">
+            <span class="folder-name">asset</span>
+            <span class="folder-meta">2 个 Markdown 文件</span>
+          </span>
+        </a>
+      </li>
+
+      <li class="browse-item doc-item">
+        <a class="item-main file-main" href="#">
+          <div class="item-actions">
+            <button class="item-action item-pin-action" type="button">置顶</button>
+            <button class="item-action item-delete-action" type="button">删除</button>
+          </div>
+          <div class="title-row">
+            <span class="doc-icon">MD</span>
+            <div class="title">GTA 业务调研记录</div>
+          </div>
+          <div class="doc-footer">
+            <div class="doc-info">
+              <div class="meta">18.4 KB</div>
+              <div class="meta">2026/5/9 15:48:12</div>
+            </div>
+            <div class="actions">
+              <span class="primary" role="button" tabindex="0">导出 PDF</span>
+            </div>
+          </div>
+        </a>
+      </li>
+    </ul>
+  </main>
+</body>
+</html>

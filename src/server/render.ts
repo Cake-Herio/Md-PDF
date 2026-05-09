@@ -13,6 +13,7 @@ type MarkdownRenderOptions = {
 
 export type DirectoryEntry = {
   name: string;
+  pinned: boolean;
   relativePath: string;
   docCount: number;
 };
@@ -22,6 +23,7 @@ export type DirectoryView = {
   parentDir: string | null;
   folders: DirectoryEntry[];
   files: DocMeta[];
+  pinnedPaths: string[];
   totalDocs: number;
 };
 
@@ -65,39 +67,74 @@ export function renderMarkdownHtml(
 }
 
 function renderItems(view: DirectoryView) {
-  const items = view.folders.map(renderFolderItem).join("") + view.files.map(renderFileItem).join("");
+  const pinnedFiles = view.files.filter((doc) => doc.pinned);
+  const regularFiles = view.files.filter((doc) => !doc.pinned);
+  const items = [
+    renderPinnedPanel(pinnedFiles),
+    view.folders.map(renderFolderItem).join(""),
+    regularFiles.map((doc) => renderFileItem(doc)).join(""),
+  ].join("");
   return items || `<li class="empty">当前目录下没有 Markdown 文件。</li>`;
+}
+
+function renderPinnedPanel(files: DocMeta[]) {
+  if (files.length === 0) return "";
+  return `<li class="pinned-panel">
+    <div class="pinned-panel-title">置顶文件</div>
+    <ul class="pinned-list">
+      ${files.map(renderPinnedFileItem).join("")}
+    </ul>
+  </li>`;
 }
 
 function renderFolderItem(folder: DirectoryEntry) {
   const encoded = encodeURIComponent(folder.relativePath);
-  return `<li class="browse-item folder-item" data-text="${escapeHtml(`${folder.name} ${folder.relativePath}`)}">
+  return `<li class="browse-item folder-item" data-kind="folder" data-path="${escapeHtml(folder.relativePath)}" data-text="${escapeHtml(`${folder.name} ${folder.relativePath}`)}">
+    <div class="item-actions">
+      <button class="item-action item-delete-action" type="button">删除</button>
+    </div>
     <a class="folder-link" href="/?dir=${encoded}" aria-label="打开文件夹 ${escapeHtml(folder.name)}">
       <span class="folder-icon" aria-hidden="true">DIR</span>
       <span class="folder-main">
         <span class="folder-name">${escapeHtml(folder.name)}</span>
         <span class="folder-meta">${folder.docCount} 个 Markdown 文件</span>
       </span>
-      <span class="folder-arrow" aria-hidden="true">&gt;</span>
     </a>
   </li>`;
 }
 
-function renderFileItem(doc: DocMeta) {
+function renderPinnedFileItem(doc: DocMeta) {
+  return renderFileItem(doc, { inPinnedPanel: true });
+}
+
+function renderFileItem(doc: DocMeta, options: { inPinnedPanel?: boolean } = {}) {
   const encoded = encodeURIComponent(doc.relativePath);
   const updated = new Date(doc.mtimeMs).toLocaleString();
-  return `<li class="browse-item doc-item" data-path="${escapeHtml(doc.relativePath)}" data-text="${escapeHtml(`${doc.title} ${doc.relativePath}`)}">
+  const pinned = doc.pinned === true;
+  return `<li class="browse-item doc-item${pinned ? " pinned" : ""}${options.inPinnedPanel ? " pinned-panel-item" : ""}" data-kind="file" data-path="${escapeHtml(doc.relativePath)}" data-pinned="${pinned ? "true" : "false"}" data-text="${escapeHtml(`${doc.title} ${doc.relativePath}`)}">
     <label class="select-row">
       <input class="file-select" type="checkbox" value="${escapeHtml(doc.relativePath)}" />
       <span>选择</span>
     </label>
-    <a class="title pdf-action" href="/pdf?path=${encoded}" data-pdf-path="${escapeHtml(doc.relativePath)}" data-pdf-title="${escapeHtml(doc.title)}">${escapeHtml(doc.title)}</a>
-    <div class="path">${escapeHtml(doc.relativePath)}</div>
-    <div class="meta">${formatBytes(doc.size)} · ${updated}</div>
-    <div class="actions">
-      <a class="pdf-action" href="/pdf?path=${encoded}" data-pdf-path="${escapeHtml(doc.relativePath)}" data-pdf-title="${escapeHtml(doc.title)}">打开 PDF</a>
-      <a href="/view?path=${encoded}">打开 MD</a>
-    </div>
+    <a class="item-main file-main" href="/view?path=${encoded}" aria-label="打开 Markdown ${escapeHtml(doc.title)}">
+      <div class="item-actions">
+        <button class="item-action item-pin-action" type="button">${pinned ? "取消置顶" : "置顶"}</button>
+        <button class="item-action item-delete-action" type="button">删除</button>
+      </div>
+      <div class="title-row">
+        <span class="doc-icon">MD</span>
+        <div class="title">${escapeHtml(doc.title)}</div>
+      </div>
+      <div class="doc-footer">
+        <div class="doc-info">
+          <div class="meta meta-size">${formatBytes(doc.size)}</div>
+          <div class="meta meta-time">${updated}</div>
+        </div>
+        <div class="actions">
+          <span class="pdf-action primary" role="button" tabindex="0" data-pdf-path="${escapeHtml(doc.relativePath)}" data-pdf-title="${escapeHtml(doc.title)}">导出 PDF</span>
+        </div>
+      </div>
+    </a>
   </li>`;
 }
 
