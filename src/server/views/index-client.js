@@ -6,6 +6,7 @@ const cancelSelectButton = document.querySelector("#cancel-select-button");
 const fileSelects = [...document.querySelectorAll(".file-select")];
 const pinButtons = [...document.querySelectorAll(".item-pin-action")];
 const deleteButtons = [...document.querySelectorAll(".item-delete-action")];
+const docList = document.querySelector(".doc-list");
 
 search?.addEventListener("input", () => {
   const keyword = search.value.trim().toLowerCase();
@@ -85,15 +86,51 @@ async function setPinned(path, pinned) {
     body: JSON.stringify({ path, pinned }),
   });
   if (!response.ok) throw new Error(await response.text());
-  window.location.reload();
+}
+
+function ensurePinnedPanel() {
+  let panel = document.querySelector(".pinned-panel");
+  if (panel) return panel;
+
+  panel = document.createElement("li");
+  panel.className = "pinned-panel";
+  panel.innerHTML = '<div class="pinned-panel-title">置顶文件</div><ul class="pinned-list"></ul>';
+  docList.prepend(panel);
+  return panel;
+}
+
+function updatePinnedPanelVisibility() {
+  const panel = document.querySelector(".pinned-panel");
+  if (!panel) return;
+  const list = panel.querySelector(".pinned-list");
+  if (list.children.length === 0) panel.remove();
+}
+
+function applyPinnedState(item, pinned) {
+  item.classList.toggle("pinned", pinned);
+  item.classList.toggle("pinned-panel-item", pinned);
+  item.dataset.pinned = pinned ? "true" : "false";
+  const button = item.querySelector(".item-pin-action");
+  if (button) button.textContent = pinned ? "取消置顶" : "置顶";
+
+  if (pinned) {
+    ensurePinnedPanel().querySelector(".pinned-list").prepend(item);
+  } else {
+    docList.append(item);
+    updatePinnedPanelVisibility();
+  }
 }
 
 for (const button of pinButtons) {
-  button.addEventListener("click", async () => {
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     const item = button.closest(".browse-item");
     if (!item || item.dataset.kind !== "file") return;
+    const pinned = item.dataset.pinned !== "true";
     try {
-      await setPinned(item.dataset.path, item.dataset.pinned !== "true");
+      await setPinned(item.dataset.path, pinned);
+      applyPinnedState(item, pinned);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     }
@@ -101,7 +138,9 @@ for (const button of pinButtons) {
 }
 
 for (const button of deleteButtons) {
-  button.addEventListener("click", async () => {
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     const item = button.closest(".browse-item");
     if (!item) return;
     try {

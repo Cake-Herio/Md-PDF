@@ -23,6 +23,7 @@ export type DirectoryView = {
   parentDir: string | null;
   folders: DirectoryEntry[];
   files: DocMeta[];
+  pinnedFiles: DocMeta[];
   pinnedPaths: string[];
   totalDocs: number;
 };
@@ -67,10 +68,9 @@ export function renderMarkdownHtml(
 }
 
 function renderItems(view: DirectoryView) {
-  const pinnedFiles = view.files.filter((doc) => doc.pinned);
   const regularFiles = view.files.filter((doc) => !doc.pinned);
   const items = [
-    renderPinnedPanel(pinnedFiles),
+    renderPinnedPanel(view.pinnedFiles),
     view.folders.map(renderFolderItem).join(""),
     regularFiles.map((doc) => renderFileItem(doc)).join(""),
   ].join("");
@@ -114,7 +114,7 @@ function renderFileItem(doc: DocMeta, options: { inPinnedPanel?: boolean } = {})
   return `<li class="browse-item doc-item${pinned ? " pinned" : ""}${options.inPinnedPanel ? " pinned-panel-item" : ""}" data-kind="file" data-path="${escapeHtml(doc.relativePath)}" data-pinned="${pinned ? "true" : "false"}" data-text="${escapeHtml(`${doc.title} ${doc.relativePath}`)}">
     <label class="select-row">
       <input class="file-select" type="checkbox" value="${escapeHtml(doc.relativePath)}" />
-      <span>选择</span>
+      
     </label>
     <a class="item-main file-main" href="/view?path=${encoded}" aria-label="打开 Markdown ${escapeHtml(doc.title)}">
       <div class="item-actions">

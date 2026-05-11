@@ -368,6 +368,15 @@ function buildDirectoryView(docs: DocStore, currentDir: string, state: ReaderSta
   const folderMap = new Map<string, { name: string; pinned: boolean; relativePath: string; docCount: number }>();
   const files: DocMeta[] = [];
   const prefix = currentDir ? `${currentDir}/` : "";
+  const pinnedFiles = state.pinnedPaths
+    .map((pinnedPath) => docs.get(pinnedPath))
+    .filter((doc): doc is DocMeta => {
+      if (!doc) return false;
+      if (!currentDir) return true;
+      return doc.relativePath.startsWith(prefix);
+    })
+    .map((doc) => ({ ...doc, pinned: true }))
+    .sort(comparePinnedEntries);
 
   for (const doc of docs.values()) {
     if (currentDir && !doc.relativePath.startsWith(prefix)) continue;
@@ -399,6 +408,7 @@ function buildDirectoryView(docs: DocStore, currentDir: string, state: ReaderSta
     parentDir: currentDir ? currentDir.split("/").slice(0, -1).join("/") : null,
     folders: [...folderMap.values()].sort(comparePinnedEntries),
     files: files.sort(comparePinnedEntries),
+    pinnedFiles,
     pinnedPaths: state.pinnedPaths,
     totalDocs: docs.size,
   };
