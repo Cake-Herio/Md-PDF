@@ -185,7 +185,26 @@ export function createApp({
     }
 
     const markdown = await fs.readFile(doc.absolutePath, "utf8");
-    res.type("html").send(renderMarkdownHtml(doc, markdown, false, { markdownDir }));
+    const sourceUrl = `${req.protocol}://${req.get("host")}/md-file?path=${encodeURIComponent(doc.relativePath)}`;
+    res.type("html").send(renderMarkdownHtml(doc, markdown, false, {
+      markdownDir,
+      sourceUrl,
+    }));
+  });
+
+  app.get("/md-file", (req, res) => {
+    const doc = getDocFromQuery(docs, req.query.path);
+    if (!doc) {
+      res.status(404).send("Markdown file not found.");
+      return;
+    }
+
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      buildContentDisposition("attachment", path.basename(doc.relativePath)),
+    );
+    createReadStream(doc.absolutePath).pipe(res);
   });
 
   app.get("/pdf", async (req, res) => {

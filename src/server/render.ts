@@ -8,6 +8,7 @@ import type { DocMeta } from "../shared/types.js";
 
 type MarkdownRenderOptions = {
   markdownDir?: string;
+  sourceUrl?: string;
   themeCss?: string;
 };
 
@@ -62,6 +63,7 @@ export function renderMarkdownHtml(
     BASE_HREF: baseHref,
     BODY_CLASS: forPdf ? "pdf typora-export" : "typora-export",
     CONTENT_HTML: String(marked.parse(renderedMarkdown)),
+    SOURCE_URL: options.sourceUrl ?? "#",
     STYLE_TAG: styleTag(options.themeCss),
     TITLE: escapeHtml(doc.title),
   });
@@ -116,7 +118,7 @@ function renderFileItem(doc: DocMeta, options: { inPinnedPanel?: boolean } = {})
       <input class="file-select" type="checkbox" value="${escapeHtml(doc.relativePath)}" />
       
     </label>
-    <a class="item-main file-main" href="/view?path=${encoded}" aria-label="打开 Markdown ${escapeHtml(doc.title)}">
+    <a class="item-main file-main" href="/view?path=${encoded}" aria-label="预览 Markdown ${escapeHtml(doc.title)}">
       <div class="item-actions">
         <button class="item-action item-pin-action" type="button">${pinned ? "取消置顶" : "置顶"}</button>
         <button class="item-action item-delete-action" type="button">删除</button>
