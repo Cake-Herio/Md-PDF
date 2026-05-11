@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   constants,
   existsSync,
@@ -43,6 +44,7 @@ const jobs = new Map<string, PdfJob>();
 const jobIdsByCacheKey = new Map<string, string>();
 const PDF_RENDER_VERSION = "asset-root-v2";
 const PDF_CACHE_INDEX_FILE = "index.json";
+let pdfCacheIndexQueue = Promise.resolve();
 
 export async function getPdfCachePaths(doc: DocMeta, cacheDir: string, options: PdfOptions = {}) {
   const theme = await loadPdfTheme(options);
@@ -155,21 +157,29 @@ async function ensurePdfWithTheme(
 }
 
 async function preparePdfCacheSlot(doc: DocMeta, cacheDir: string, cacheKey: string) {
-  const index = await loadPdfCacheIndex(cacheDir);
-  const oldCacheKey = index[doc.relativePath];
+  await withPdfCacheIndexLock(async () => {
+    const index = await loadPdfCacheIndex(cacheDir);
+    const oldCacheKey = index[doc.relativePath];
 
-  if (oldCacheKey && oldCacheKey !== cacheKey) {
-    await deletePdfCachePair(cacheDir, oldCacheKey);
-    jobIdsByCacheKey.delete(oldCacheKey);
-    jobs.delete(oldCacheKey);
-  }
+    if (oldCacheKey && oldCacheKey !== cacheKey) {
+      await deletePdfCachePair(cacheDir, oldCacheKey);
+      jobIdsByCacheKey.delete(oldCacheKey);
+      jobs.delete(oldCacheKey);
+    }
 
-  if (oldCacheKey !== cacheKey) {
-    index[doc.relativePath] = cacheKey;
-    await savePdfCacheIndex(cacheDir, index);
-  }
+    if (oldCacheKey !== cacheKey) {
+      index[doc.relativePath] = cacheKey;
+      await savePdfCacheIndex(cacheDir, index);
+    }
 
-  await deleteUnindexedPdfCaches(cacheDir, new Set(Object.values(index)));
+    await deleteUnindexedPdfCaches(cacheDir, new Set(Object.values(index)));
+  });
+}
+
+async function withPdfCacheIndexLock<T>(task: () => Promise<T>) {
+  const run = pdfCacheIndexQueue.then(task, task);
+  pdfCacheIndexQueue = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 async function deletePdfCachePair(cacheDir: string, cacheKey: string) {
@@ -215,8 +225,9 @@ async function loadPdfCacheIndex(cacheDir: string): Promise<PdfCacheIndex> {
 async function savePdfCacheIndex(cacheDir: string, index: PdfCacheIndex) {
   await fs.mkdir(cacheDir, { recursive: true });
   const indexPath = path.join(cacheDir, PDF_CACHE_INDEX_FILE);
-  await fs.writeFile(`${indexPath}.tmp`, `${JSON.stringify(index, null, 2)}\n`, "utf8");
-  await fs.rename(`${indexPath}.tmp`, indexPath);
+  const tempPath = `${indexPath}.${process.pid}.${randomUUID()}.tmp`;
+  await fs.writeFile(tempPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+  await fs.rename(tempPath, indexPath);
 }
 
 function isMissingFileError(error: unknown) {

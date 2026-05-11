@@ -1,0 +1,14 @@
+services:
+  md-pdf-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: md-pdf-server
+    restart: unless-stopped
+    ports:
+      - "50001:50001"
+    environment:
+      BROWSER_PATH: /usr/bin/chromium
+    volumes:
+      - ./docker-data/files:/data/md-pdf/files
+      - ./docker-data/state:/app/.md-pdf-server

@@ -10,6 +10,7 @@ import type { AssetStore, DocMeta, DocStore, ReaderState } from "../shared/types
 import { buildContentDisposition } from "../shared/format.js";
 import { isAssetPath, isImageAsset, isInside, normalizeRelativePath } from "../shared/path.js";
 import { isPinnedPath, setPinnedPath } from "../shared/state.js";
+import { upsertAsset, upsertDoc } from "../shared/doc-store.js";
 import {
   deletePdfCacheForDoc,
   ensurePdf,
@@ -42,7 +43,11 @@ export function createApp({
 }: CreateAppOptions) {
   const app = express();
   const pdfOptions = { assets, markdownDir, themeCssPath };
-  app.use(express.json());
+  app.use(express.json({ limit: "100mb" }));
+
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true });
+  });
 
   app.get("/", (req, res) => {
     const currentDir = normalizeDirectoryQuery(req.query.dir);
@@ -76,6 +81,73 @@ export function createApp({
       const deleted = await deleteServerPath(relativePath, markdownDir, cacheDir, docs);
       state.pinnedPaths = state.pinnedPaths.filter((item) => item !== relativePath && !item.startsWith(`${relativePath}/`));
 
+      results.push({
+        path: relativePath,
+        status: deleted.files > 0 ? "deleted" : "not_found",
+        deletedFiles: deleted.files,
+        removedPdfCaches: deleted.pdfCaches,
+      });
+    }
+
+    await saveState();
+    res.json({ results });
+  });
+
+  app.post("/api/sync/file", async (req, res) => {
+    const relativePath = normalizeFileQuery(String(req.body?.path ?? ""));
+    const contentBase64 = typeof req.body?.contentBase64 === "string" ? req.body.contentBase64 : "";
+    if (!relativePath || !contentBase64) {
+      res.status(400).json({ error: "path and contentBase64 are required." });
+      return;
+    }
+
+    const kind = getSyncFileKind(relativePath);
+    if (!kind) {
+      res.status(400).json({ error: "Only Markdown files and asset images can be synced." });
+      return;
+    }
+
+    const absolutePath = path.resolve(markdownDir, relativePath);
+    if (!isInside(markdownDir, absolutePath)) {
+      res.status(400).json({ error: "Invalid path." });
+      return;
+    }
+
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, Buffer.from(contentBase64, "base64"));
+
+    if (kind === "markdown") {
+      await upsertDoc(markdownDir, absolutePath, docs);
+      const doc = docs.get(relativePath);
+      if (doc) void startPdfJob(doc, cacheDir, pdfOptions);
+      console.log(`Synced Markdown from agent: ${relativePath}`);
+    } else {
+      await upsertAsset(markdownDir, absolutePath, assets);
+      for (const doc of docs.values()) void startPdfJob(doc, cacheDir, pdfOptions);
+      console.log(`Synced asset from agent: ${relativePath}`);
+    }
+
+    res.json({ path: relativePath, status: "synced", kind });
+  });
+
+  app.post("/api/sync/delete", async (req, res) => {
+    const paths = Array.isArray(req.body?.paths) ? req.body.paths : [];
+    if (paths.length === 0) {
+      res.status(400).json({ error: "paths must be a non-empty array." });
+      return;
+    }
+
+    const results = [];
+    for (const value of paths) {
+      if (typeof value !== "string") continue;
+      const relativePath = normalizeFileQuery(value);
+      if (!relativePath) {
+        results.push({ path: value, status: "invalid" });
+        continue;
+      }
+
+      const deleted = await deleteServerPath(relativePath, markdownDir, cacheDir, docs);
+      state.pinnedPaths = state.pinnedPaths.filter((item) => item !== relativePath && !item.startsWith(`${relativePath}/`));
       results.push({
         path: relativePath,
         status: deleted.files > 0 ? "deleted" : "not_found",
@@ -252,6 +324,12 @@ function normalizeAssetQuery(value: unknown) {
   const normalized = normalizeFileQuery(value);
   if (!normalized || !isAssetPath(normalized) || !isImageAsset(normalized)) return null;
   return normalized;
+}
+
+function getSyncFileKind(relativePath: string) {
+  if (/\.md$/i.test(relativePath)) return "markdown" as const;
+  if (isAssetPath(relativePath) && isImageAsset(relativePath)) return "asset" as const;
+  return null;
 }
 
 function isMissingFileError(error: unknown) {

@@ -1,11 +1,8 @@
-import { createServer } from "node:http";
-import { homedir, networkInterfaces } from "node:os";
+import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { promises as fs } from "node:fs";
-import { createApp } from "../server/app.js";
-import { createPdfWarmup } from "../server/pdf-warmup.js";
 import {
   createAssetStore,
   createDocStore,
@@ -21,23 +18,21 @@ import {
   saveReaderState,
 } from "../shared/state.js";
 import { isMarkdown, shouldIgnore, toRelative } from "../shared/path.js";
+import type { AssetMeta, DocMeta } from "../shared/types.js";
 
 const appRoot = process.cwd();
 const stateDir = path.join(appRoot, ".md-local-reader");
-const cacheDir = path.join(stateDir, "pdf-cache");
 const statePath = path.join(stateDir, "state.json");
-const defaultPort = 50002;
 
 export async function startLocalReader() {
   const args = parseArgs(process.argv.slice(2));
-  const port = Number(args.port ?? defaultPort);
   const markdownDir = await resolveMarkdownDir(args.dir);
-  const themeCssPath = await resolveThemeCssPath(args.themeCss ?? process.env.TYPORA_THEME_CSS);
   const state = await loadReaderState(statePath);
+  const serverUrl = await resolveServerUrl(args.server, state.serverUrl);
+  state.serverUrl = serverUrl;
+
   const docs = createDocStore();
   const assets = createAssetStore();
-
-  await fs.mkdir(cacheDir, { recursive: true });
 
   state.selectedPaths = await chooseSelectedPaths(markdownDir, state.selectedPaths, args.sync);
   await saveReaderState(statePath, state);
@@ -54,83 +49,38 @@ export async function startLocalReader() {
     console.log("Asset sync disabled because no Markdown files are selected.");
   }
 
-  const app = createApp({
-    markdownDir,
-    cacheDir,
-    docs,
-    assets,
-    themeCssPath,
-    state,
-    saveState: () => saveReaderState(statePath, state),
-  });
-  const server = createServer(app);
-  const pdfWarmup = createPdfWarmup({
-    assets,
-    cacheDir,
-    docs,
-    markdownDir,
-    themeCssPath,
-  });
+  await assertServerReachable(serverUrl);
+  await syncAll(serverUrl, docs, assets, shouldSyncAssets);
 
-  listenOnPort(server, port, () => {
-    const actualLocalUrl = `http://localhost:${port}`;
-    const phoneUrls = getLanIPv4().map((ip) => `http://${ip}:${port}`);
-    console.log("");
-    console.log("Markdown PDF Reader is running.");
-    console.log(`Markdown folder: ${markdownDir}`);
-    console.log(`Sync selection:  ${formatSelection(state.selectedPaths)}`);
-    if (themeCssPath) console.log(`Typora theme CSS: ${themeCssPath}`);
-    console.log(`Local address:   ${actualLocalUrl}`);
-    for (const phoneUrl of phoneUrls) {
-      console.log(`Phone address:   ${phoneUrl}`);
-    }
-    console.log(`Files API:       ${actualLocalUrl}/api/files`);
-    console.log(`Assets API:      ${actualLocalUrl}/api/assets`);
-    console.log("");
-    console.log("Keep this CLI open to view runtime logs. Press Ctrl+C to stop.");
-  });
+  console.log("");
+  console.log("Markdown sync agent is running.");
+  console.log(`Markdown folder: ${markdownDir}`);
+  console.log(`Server URL:       ${serverUrl}`);
+  console.log(`Sync selection:   ${formatSelection(state.selectedPaths)}`);
+  console.log("");
+  console.log("Keep this CLI open to sync local changes. Press Ctrl+C to stop.");
 
   watchMarkdownDir(markdownDir, docs, {
     ...scannerOptions,
     assets: shouldSyncAssets ? assets : undefined,
     onDelete: async (relativePath) => {
-      console.log(`Removed local watched file from list: ${relativePath}`);
+      await deleteRemotePaths(serverUrl, [relativePath]);
+      console.log(`Synced delete: ${relativePath}`);
     },
-    onChange: (relativePath) => {
-      pdfWarmup.scheduleOne(relativePath, "Markdown changed");
+    onChange: async (relativePath) => {
+      const doc = docs.get(relativePath);
+      if (!doc) return;
+      await uploadDoc(serverUrl, doc);
     },
-    onAssetChange: (relativePath) => {
-      console.log(`Detected local asset change: ${relativePath}`);
-      pdfWarmup.scheduleAll("asset changed");
+    onAssetChange: async (relativePath) => {
+      const asset = assets.get(relativePath);
+      if (!asset) return;
+      await uploadAsset(serverUrl, asset);
     },
     onAssetDelete: async (relativePath) => {
-      console.log(`Detected local asset delete: ${relativePath}`);
-      pdfWarmup.scheduleAll("asset deleted");
+      await deleteRemotePaths(serverUrl, [relativePath]);
+      console.log(`Synced asset delete: ${relativePath}`);
     },
-  });
-}
-
-function listenOnPort(
-  server: ReturnType<typeof createServer>,
-  port: number,
-  onListening: () => void,
-) {
-  const onError = (error: NodeJS.ErrnoException) => {
-    server.off("error", onError);
-    if (error.code === "EADDRINUSE") {
-      console.error(`Port ${port} is already in use. Please stop the process using this port, then restart.`);
-      process.exitCode = 1;
-      return;
-    }
-
-    console.error(error);
-    process.exitCode = 1;
-  };
-
-  server.once("error", onError);
-  server.listen(port, "0.0.0.0", () => {
-    server.off("error", onError);
-    onListening();
   });
 }
 
@@ -149,6 +99,21 @@ async function resolveMarkdownDir(inputDir?: string) {
   return resolved;
 }
 
+async function resolveServerUrl(inputUrl?: string, savedUrl?: string) {
+  const defaultUrl = savedUrl || "http://localhost:50001";
+  const answer = inputUrl?.trim() || await promptOptionalPath(
+    `请输入服务器地址（直接回车使用：${defaultUrl}）: `,
+    defaultUrl,
+  );
+  return normalizeServerUrl(answer);
+}
+
+function normalizeServerUrl(value: string) {
+  const trimmed = value.trim().replace(/\/+$/g, "");
+  if (!/^https?:\/\//i.test(trimmed)) return `http://${trimmed}`;
+  return trimmed;
+}
+
 async function resolveDesktopDir() {
   const candidates = [
     path.join(homedir(), "Desktop"),
@@ -163,13 +128,6 @@ async function resolveDesktopDir() {
   return candidates[0];
 }
 
-async function resolveThemeCssPath(inputPath?: string) {
-  const cssPath = inputPath?.trim() || await promptOptionalPath(
-    "请输入自定义 CSS 文件路径（直接回车使用默认样式）: ",
-  );
-  return resolveOptionalFile(cssPath);
-}
-
 async function promptOptionalPath(question: string, defaultValue = "") {
   const rl = createInterface({ input, output });
   const answer = await rl.question(question);
@@ -177,25 +135,12 @@ async function promptOptionalPath(question: string, defaultValue = "") {
   return answer.trim() || defaultValue;
 }
 
-async function resolveOptionalFile(inputPath?: string) {
-  const filePath = inputPath?.trim();
-  if (!filePath) return undefined;
-
-  const resolved = path.resolve(filePath.replace(/^"|"$/g, ""));
-  const stat = await fs.stat(resolved).catch(() => null);
-  if (!stat?.isFile()) {
-    throw new Error(`Not a file: ${resolved}`);
-  }
-  return resolved;
-}
-
 function parseArgs(args: string[]) {
   const result: Record<string, string> = {};
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--dir" && args[i + 1]) result.dir = args[++i];
-    if (arg === "--port" && args[i + 1]) result.port = args[++i];
-    if (arg === "--theme-css" && args[i + 1]) result.themeCss = args[++i];
+    if (arg === "--server" && args[i + 1]) result.server = args[++i];
     if (arg === "--sync" && args[i + 1]) result.sync = args[++i];
   }
   return result;
@@ -286,9 +231,60 @@ function formatSelection(selectedPaths: string[]) {
   return selectedPaths.length > 0 ? selectedPaths.join(", ") : "未选择";
 }
 
-function getLanIPv4() {
-  return Object.values(networkInterfaces())
-    .flatMap((items) => items ?? [])
-    .filter((item) => item.family === "IPv4" && !item.internal)
-    .map((item) => item.address);
+async function assertServerReachable(serverUrl: string) {
+  const response = await fetch(`${serverUrl}/api/health`);
+  if (!response.ok) {
+    throw new Error(`Server is not reachable: ${serverUrl}`);
+  }
+}
+
+async function syncAll(serverUrl: string, docs: Map<string, DocMeta>, assets: Map<string, AssetMeta>, shouldSyncAssets: boolean) {
+  console.log(`Initial sync: ${docs.size} Markdown file(s).`);
+  for (const doc of docs.values()) {
+    await uploadDoc(serverUrl, doc);
+  }
+
+  if (!shouldSyncAssets) return;
+  console.log(`Initial asset sync: ${assets.size} asset file(s).`);
+  for (const asset of assets.values()) {
+    await uploadAsset(serverUrl, asset);
+  }
+}
+
+async function uploadDoc(serverUrl: string, doc: DocMeta) {
+  await uploadFile(serverUrl, doc.relativePath, doc.absolutePath);
+  console.log(`Synced Markdown: ${doc.relativePath}`);
+}
+
+async function uploadAsset(serverUrl: string, asset: AssetMeta) {
+  await uploadFile(serverUrl, asset.relativePath, asset.absolutePath);
+  console.log(`Synced asset: ${asset.relativePath}`);
+}
+
+async function uploadFile(serverUrl: string, relativePath: string, absolutePath: string) {
+  const content = await fs.readFile(absolutePath);
+  const response = await fetch(`${serverUrl}/api/sync/file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: relativePath,
+      contentBase64: content.toString("base64"),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to sync ${relativePath}: ${await response.text()}`);
+  }
+}
+
+async function deleteRemotePaths(serverUrl: string, paths: string[]) {
+  const response = await fetch(`${serverUrl}/api/sync/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete remote path: ${await response.text()}`);
+  }
 }

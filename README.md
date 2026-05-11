@@ -122,6 +122,18 @@ npm run dev
 npm run dev -- --dir "C:\Users\wenxiang\Desktop" --port 50002
 ```
 
+如果要分开运行 server 和 agent：
+
+```powershell
+# 服务器，手机访问这个服务
+npm run dev:server -- --dir "D:\md-pdf-storage"
+
+# 本地监听端，按提示输入服务器地址，例如 http://192.168.x.x:50001
+npm run dev:agent -- --dir "C:\Users\wenxiang\Desktop"
+```
+
+agent 会把选中的 Markdown 和 `asset` 图片通过 HTTP 同步到 server；手机端只需要访问 server 输出的地址。
+
 启动后，电脑浏览器或 iPhone Safari 打开程序输出的地址即可。
 
 如果手机和电脑在同一个 Wi-Fi，优先用类似 `http://192.168.x.x:3333` 的地址。

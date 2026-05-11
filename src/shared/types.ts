@@ -22,6 +22,7 @@ export type AssetStore = Map<string, AssetMeta>;
 
 export type ReaderState = {
   deviceId: string;
+  serverUrl?: string;
   selectedPaths: string[];
   lastSyncedHashByPath: Record<string, string>;
   pinnedPaths: string[];

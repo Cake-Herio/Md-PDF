@@ -11,6 +11,7 @@ export async function loadReaderState(statePath: string): Promise<ReaderState> {
   const parsed = JSON.parse(raw) as Partial<ReaderState>;
   return {
     deviceId: typeof parsed.deviceId === "string" ? parsed.deviceId : randomUUID(),
+    serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : undefined,
     selectedPaths: Array.isArray(parsed.selectedPaths)
       ? parsed.selectedPaths.map(normalizeRelativePath).filter(Boolean)
       : [],
@@ -55,6 +56,7 @@ export function isPinnedPath(relativePath: string, state: ReaderState) {
 function createDefaultState(): ReaderState {
   return {
     deviceId: randomUUID(),
+    serverUrl: undefined,
     selectedPaths: [],
     lastSyncedHashByPath: {},
     pinnedPaths: [],

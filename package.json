@@ -11,6 +11,7 @@
     "start": "node dist/agent/index.js",
     "start:agent": "node dist/agent/index.js",
     "start:server": "node dist/server/index.js",
+    "start:server:docker": "node dist/server/index.js --dir /data/md-pdf/files --port 50001",
     "bundle": "npm run bundle:agent",
     "bundle:agent": "esbuild src/agent/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=build/agent.cjs",
     "bundle:server": "esbuild src/server/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=build/server.cjs",
