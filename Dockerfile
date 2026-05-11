@@ -2,7 +2,7 @@ FROM node:20-bookworm-slim AS build
 
 WORKDIR /app
 
-RUN sed -i 's#http://deb.debian.org/debian#https://mirrors.aliyun.com/debian#g; s#http://security.debian.org/debian-security#https://mirrors.aliyun.com/debian-security#g' /etc/apt/sources.list.d/debian.sources \
+RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.aliyun.com/debian#g; s#http://security.debian.org/debian-security#http://mirrors.aliyun.com/debian-security#g' /etc/apt/sources.list.d/debian.sources \
   && npm config set registry https://registry.npmmirror.com
 
 COPY package*.json ./
@@ -19,7 +19,7 @@ ENV BROWSER_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
-RUN sed -i 's#http://deb.debian.org/debian#https://mirrors.aliyun.com/debian#g; s#http://security.debian.org/debian-security#https://mirrors.aliyun.com/debian-security#g' /etc/apt/sources.list.d/debian.sources \
+RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.aliyun.com/debian#g; s#http://security.debian.org/debian-security#http://mirrors.aliyun.com/debian-security#g' /etc/apt/sources.list.d/debian.sources \
   && npm config set registry https://registry.npmmirror.com
 
 RUN apt-get update \
