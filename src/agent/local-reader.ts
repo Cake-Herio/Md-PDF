@@ -20,6 +20,13 @@ import {
 import { isMarkdown, shouldIgnore, toRelative } from "../shared/path.js";
 import type { AssetMeta, DocMeta } from "../shared/types.js";
 
+type RemoteFile = Omit<DocMeta, "absolutePath">;
+type RemoteAsset = Omit<AssetMeta, "absolutePath">;
+type RemoteChoice = {
+  type: "folder" | "file";
+  path: string;
+};
+
 const appRoot = process.cwd();
 const stateDir = path.join(appRoot, ".md-local-reader");
 const statePath = path.join(stateDir, "state.json");
@@ -33,6 +40,9 @@ export async function startLocalReader() {
 
   const docs = createDocStore();
   const assets = createAssetStore();
+
+  await assertServerReachable(serverUrl);
+  await pullServerFiles(markdownDir, serverUrl);
 
   state.selectedPaths = await chooseSelectedPaths(markdownDir, state.selectedPaths, args.sync);
   await saveReaderState(statePath, state);
@@ -49,7 +59,6 @@ export async function startLocalReader() {
     console.log("Asset sync disabled because no Markdown files are selected.");
   }
 
-  await assertServerReachable(serverUrl);
   await syncAll(serverUrl, docs, assets, shouldSyncAssets);
 
   console.log("");
@@ -150,41 +159,27 @@ async function chooseSelectedPaths(markdownDir: string, currentSelection: string
   if (syncArg === "all") return ["*"];
   if (syncArg) return syncArg.split(",").map((item) => item.trim()).filter(Boolean);
 
-  if (currentSelection.length > 0) {
-    const rl = createInterface({ input, output });
-    const answer = await rl.question(`继续使用上次同步范围 (${formatSelection(currentSelection)})？[Y/n]: `);
-    rl.close();
-    if (!/^n/i.test(answer.trim())) return currentSelection;
-  }
-
   const markdownFiles = await listMarkdownFiles(markdownDir);
   if (markdownFiles.length === 0) return [];
 
   const choices = buildSelectionChoices(markdownFiles);
   console.log("");
-  console.log("请选择要同步/监听的 Markdown 文件或文件夹：");
-  console.log("0. 不同步任何文件");
-  console.log("直接回车：全部 Markdown 文件");
+  console.log("本地根目录内容：");
   choices.forEach((choice, index) => {
     console.log(`${index + 1}. [${choice.type === "folder" ? "目录" : "文件"}] ${choice.path}`);
   });
 
   const rl = createInterface({ input, output });
-  const answer = await rl.question("输入编号（可用逗号分隔，例如 1,3,5；输入 0 表示不同步；直接回车选择全部）: ");
+  const answer = await rl.question(
+    "是否同步本地文件到服务器？直接回车同步全部；输入编号/区间选择部分（如 1,3 或 1-10）；输入 0 跳过: ",
+  );
   rl.close();
 
   const trimmed = answer.trim();
   if (trimmed === "0" || /^none$/i.test(trimmed)) return [];
   if (!trimmed || /^all$/i.test(trimmed)) return ["*"];
 
-  const selected = new Set<string>();
-  for (const token of trimmed.split(",")) {
-    const index = Number(token.trim());
-    if (!Number.isInteger(index) || index < 1 || index > choices.length) continue;
-    selected.add(choices[index - 1].path);
-  }
-
-  return selected.size > 0 ? [...selected] : ["*"];
+  return selectChoicePaths(choices, trimmed);
 }
 
 async function listMarkdownFiles(root: string, dir = root): Promise<string[]> {
@@ -226,6 +221,11 @@ function buildSelectionChoices(markdownFiles: string[]) {
   ];
 }
 
+function selectChoicePaths(choices: RemoteChoice[], inputValue: string) {
+  const selectedIndexes = parseSelectionIndexes(inputValue, choices.length);
+  return selectedIndexes.map((index) => choices[index - 1].path);
+}
+
 function formatSelection(selectedPaths: string[]) {
   if (selectedPaths.includes("*")) return "全部 Markdown 文件";
   return selectedPaths.length > 0 ? selectedPaths.join(", ") : "未选择";
@@ -236,6 +236,135 @@ async function assertServerReachable(serverUrl: string) {
   if (!response.ok) {
     throw new Error(`Server is not reachable: ${serverUrl}`);
   }
+}
+
+async function pullServerFiles(markdownDir: string, serverUrl: string) {
+  const files = await fetchJson<RemoteFile[]>(`${serverUrl}/api/files`);
+  if (files.length === 0) {
+    console.log("Server has no Markdown files to pull.");
+    return;
+  }
+
+  const choices = buildRemoteRootChoices(files);
+  console.log("");
+  console.log("服务器根目录内容：");
+  choices.forEach((choice, index) => {
+    console.log(`${index + 1}. [${choice.type === "folder" ? "目录" : "文件"}] ${choice.path}`);
+  });
+
+  const rl = createInterface({ input, output });
+  const answer = await rl.question(
+    "是否先同步服务器文件到本地？直接回车同步全部；输入编号/区间选择部分（如 1,3 或 1-10）；输入 0 跳过: ",
+  );
+  rl.close();
+
+  const trimmed = answer.trim();
+  if (trimmed === "0" || /^n(o)?$/i.test(trimmed)) {
+    console.log("Skipped pulling files from server.");
+    return;
+  }
+
+  const selectedFiles = trimmed ? selectRemoteFiles(files, choices, trimmed) : files;
+
+  if (selectedFiles.length === 0) {
+    console.log("No server files selected to pull.");
+    return;
+  }
+
+  console.log(`Pulling ${selectedFiles.length} Markdown file(s) from server...`);
+  for (const file of selectedFiles) {
+    await downloadRemoteFile(markdownDir, `${serverUrl}/md-file?path=${encodeURIComponent(file.relativePath)}`, file.relativePath);
+    console.log(`Pulled Markdown: ${file.relativePath}`);
+  }
+
+  const assets = await fetchJson<RemoteAsset[]>(`${serverUrl}/api/assets`);
+  if (assets.length > 0) {
+    console.log(`Pulling ${assets.length} asset file(s) from server...`);
+    for (const asset of assets) {
+      await downloadRemoteFile(markdownDir, `${serverUrl}/asset?path=${encodeURIComponent(asset.relativePath)}`, asset.relativePath);
+      console.log(`Pulled asset: ${asset.relativePath}`);
+    }
+  }
+}
+
+function selectRemoteFiles(files: RemoteFile[], choices: RemoteChoice[], inputValue: string) {
+  const selectedIndexes = parseSelectionIndexes(inputValue, choices.length);
+  const selectedChoices = selectedIndexes.map((index) => choices[index - 1]);
+  return files.filter((file) => {
+    return selectedChoices.some((choice) => {
+      if (choice.type === "file") return file.relativePath === choice.path;
+      return file.relativePath.startsWith(`${choice.path}/`);
+    });
+  });
+}
+
+function buildRemoteRootChoices(files: RemoteFile[]): RemoteChoice[] {
+  const folders = new Set<string>();
+  const rootFiles = new Set<string>();
+  for (const file of files) {
+    const [firstSegment, ...rest] = file.relativePath.split("/");
+    if (!firstSegment) continue;
+    if (rest.length === 0) {
+      rootFiles.add(firstSegment);
+    } else {
+      folders.add(firstSegment);
+    }
+  }
+
+  return [
+    ...[...folders].sort((a, b) => a.localeCompare(b, "zh-Hans-CN")).map((item) => ({
+      type: "folder" as const,
+      path: item,
+    })),
+    ...[...rootFiles].sort((a, b) => a.localeCompare(b, "zh-Hans-CN")).map((item) => ({
+      type: "file" as const,
+      path: item,
+    })),
+  ];
+}
+
+function parseSelectionIndexes(value: string, max: number) {
+  const indexes = new Set<number>();
+  const tokens = value.split(",").map((item) => item.trim()).filter(Boolean);
+  if (tokens.length === 0) throw new Error("No selection provided.");
+
+  for (const token of tokens) {
+    const rangeMatch = token.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (rangeMatch) {
+      const start = Number(rangeMatch[1]);
+      const end = Number(rangeMatch[2]);
+      if (start > end) throw new Error(`Invalid range: ${token}`);
+      if (start < 1 || end > max) throw new Error(`Range out of bounds: ${token}`);
+      for (let index = start; index <= end; index += 1) {
+        if (indexes.has(index)) throw new Error(`Duplicate selection: ${index}`);
+        indexes.add(index);
+      }
+      continue;
+    }
+
+    const index = Number(token);
+    if (!Number.isInteger(index)) throw new Error(`Invalid selection: ${token}`);
+    if (index < 1 || index > max) throw new Error(`Selection out of bounds: ${token}`);
+    if (indexes.has(index)) throw new Error(`Duplicate selection: ${index}`);
+    indexes.add(index);
+  }
+
+  return [...indexes].sort((a, b) => a - b);
+}
+
+async function downloadRemoteFile(root: string, url: string, relativePath: string) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download ${relativePath}: ${await response.text()}`);
+
+  const targetPath = path.resolve(root, relativePath);
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Request failed: ${url}. ${await response.text()}`);
+  return response.json() as Promise<T>;
 }
 
 async function syncAll(serverUrl: string, docs: Map<string, DocMeta>, assets: Map<string, AssetMeta>, shouldSyncAssets: boolean) {

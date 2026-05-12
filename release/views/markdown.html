@@ -8,6 +8,10 @@
   {{STYLE_TAG}}
 </head>
 <body class="{{BODY_CLASS}}">
+  <nav class="markdown-nav">
+    <button class="markdown-nav-button" type="button" onclick="history.back()">返回</button>
+    <a class="markdown-nav-button primary" href="{{SOURCE_URL}}">导出 MD</a>
+  </nav>
   <article id="write" class="markdown-body typora-export">
     {{CONTENT_HTML}}
   </article>
